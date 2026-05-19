@@ -45,8 +45,10 @@ const familyTreeSlice = createSlice({
       localStorage.setItem('familyTree', JSON.stringify(state));
     },
     addRelationship: (state, action) => {
-      const { fromId, toId, type } = action.payload;
+      const { fromId, toId, type, sourceHandle, targetHandle } = action.payload;
       const relationship = { fromId, toId, type };
+      if (sourceHandle) relationship.sourceHandle = sourceHandle;
+      if (targetHandle) relationship.targetHandle = targetHandle;
       state.relationships.push(relationship);
       localStorage.setItem('familyTree', JSON.stringify(state));
     },
@@ -56,6 +58,16 @@ const familyTreeSlice = createSlice({
         (rel) => !(rel.fromId === fromId && rel.toId === toId)
       );
       localStorage.setItem('familyTree', JSON.stringify(state));
+    },
+    updateRelationship: (state, action) => {
+      const { fromId, toId, ...updates } = action.payload;
+      const rel = state.relationships.find(
+        (r) => r.fromId === fromId && r.toId === toId
+      );
+      if (rel) {
+        Object.assign(rel, updates);
+        localStorage.setItem('familyTree', JSON.stringify(state));
+      }
     },
     selectPerson: (state, action) => {
       state.selectedPersonId = action.payload;
@@ -87,6 +99,7 @@ export const {
   deletePerson,
   addRelationship,
   removeRelationship,
+  updateRelationship,
   selectPerson,
   loadFamilyTree,
   restoreFamilyTree,

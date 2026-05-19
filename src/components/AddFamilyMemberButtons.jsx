@@ -61,54 +61,22 @@ export default function AddFamilyMemberButtons({ personId, quickAddRequest, onCo
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <button
-          onClick={() => setShowForm('parent')}
-          className="btn btn-primary btn-sm"
-        >
-          + Add Parent
-        </button>
-        <button
-          onClick={() => setShowForm('child')}
-          className="btn btn-primary btn-sm"
-        >
-          + Add Child
-        </button>
-        <button
-          onClick={() => setShowForm('spouse')}
-          className="btn btn-primary btn-sm"
-        >
-          + Add Spouse
-        </button>
-        <button
-          onClick={() => setShowForm('ex_spouse')}
-          className="btn btn-primary btn-sm"
-        >
-          + Add Ex Spouse
-        </button>
-        <button
-          onClick={() => setShowForm('sibling')}
-          className="btn btn-primary btn-sm"
-        >
-          + Add Sibling
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+        <button onClick={() => setShowForm('parent')}   className="btn btn-primary btn-sm">+ Parent</button>
+        <button onClick={() => setShowForm('child')}    className="btn btn-primary btn-sm">+ Child</button>
+        <button onClick={() => setShowForm('spouse')}   className="btn btn-primary btn-sm">+ Spouse</button>
+        <button onClick={() => setShowForm('ex_spouse')} className="btn btn-primary btn-sm">+ Ex-Spouse</button>
+        <button onClick={() => setShowForm('sibling')} className="btn btn-primary btn-sm" style={{ gridColumn: 'span 2' }}>+ Sibling</button>
       </div>
 
       {showForm && (
-        <div className="card">
-          <h3 className="card-header">
-            Add {showForm.charAt(0).toUpperCase() + showForm.slice(1)}
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '14px', background: '#f9fafb' }}>
+          <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#374151', margin: '0 0 12px' }}>
+            Add {showForm === 'ex_spouse' ? 'Ex-Spouse' : showForm.charAt(0).toUpperCase() + showForm.slice(1)}
           </h3>
-          <PersonForm
-            onSubmit={handleAddMember(showForm)}
-          />
-          <button
-            onClick={() => setShowForm(null)}
-            className="btn btn-secondary btn-sm mt-4"
-          >
-            Cancel
-          </button>
+          <PersonForm onSubmit={handleAddMember(showForm)} />
+          <button onClick={() => setShowForm(null)} className="btn btn-secondary btn-sm" style={{ marginTop: '10px' }}>Cancel</button>
         </div>
       )}
     </div>
