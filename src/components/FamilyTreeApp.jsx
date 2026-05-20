@@ -334,6 +334,64 @@ function TreeLines({ persons, pos }) {
   const els = [];
   const drawnCouples = new Set();
 
+  // Build implicit-couple map: parents who share children but have no explicit spouse link.
+  // Key: "idA~idB" (sorted); Value: Set of shared child IDs.
+  const implicitCouples = new Map();
+  persons.forEach((p) => {
+    (p.children || []).forEach((cid) => {
+      const child = pm.get(cid);
+      if (!child) return;
+      (child.parents || []).forEach((pid) => {
+        if (pid === p.id || !pos[pid] || !pos[p.id]) return;
+        const other = pm.get(pid);
+        if (!other) return;
+        // Skip if they are already an explicit couple
+        if (p.spouse === pid || other.spouse === p.id) return;
+        const pairKey = [p.id, pid].sort().join("~");
+        if (!implicitCouples.has(pairKey)) implicitCouples.set(pairKey, new Set());
+        implicitCouples.get(pairKey).add(cid);
+      });
+    });
+  });
+
+  // Helper: render a couple group (connector + dot + children) given two parent positions.
+  function renderCoupleGroup(key, posA, posB, allChildren) {
+    const [lx, lNodeY, rx, rNodeY] =
+      posA.x < posB.x
+        ? [posA.x + CW, posA.y + CH / 2, posB.x, posB.y + CH / 2]
+        : [posB.x + CW, posB.y + CH / 2, posA.x, posA.y + CH / 2];
+    const dotX = (lx + rx) / 2;
+    const dotY = (lNodeY + rNodeY) / 2;
+    const childPositions = allChildren.map((c) => pos[c]).filter(Boolean);
+    return (
+      <g key={key}>
+        <line x1={lx} y1={lNodeY} x2={dotX - DOT_R - 1} y2={dotY} stroke={T.line} strokeWidth={1.5} />
+        <line x1={dotX + DOT_R + 1} y1={dotY} x2={rx} y2={rNodeY} stroke={T.line} strokeWidth={1.5} />
+        <circle cx={dotX} cy={dotY} r={DOT_R + 3} fill={T.dotRing} opacity={0.6} />
+        <circle cx={dotX} cy={dotY} r={DOT_R} fill={T.dot} />
+        {allChildren.length > 0 && childPositions.length > 0 && (() => {
+          const sibY = dotY + DROP;
+          const cxArr = allChildren.map((c) => pos[c]).filter(Boolean).map((cp) => cp.x + CW / 2);
+          const minCX = Math.min(...cxArr);
+          const maxCX = Math.max(...cxArr);
+          const barLeft = Math.min(minCX, dotX);
+          const barRight = Math.max(maxCX, dotX);
+          return (
+            <g>
+              <line x1={dotX} y1={dotY + DOT_R} x2={dotX} y2={sibY} stroke={T.line} strokeWidth={1.5} />
+              <line x1={barLeft} y1={sibY} x2={barRight} y2={sibY} stroke={T.line} strokeWidth={1.5} />
+              {allChildren.map((cid) => {
+                const cp = pos[cid];
+                if (!cp) return null;
+                return <line key={`ch~${cid}`} x1={cp.x + CW / 2} y1={sibY} x2={cp.x + CW / 2} y2={cp.y} stroke={T.line} strokeWidth={1.5} />;
+              })}
+            </g>
+          );
+        })()}
+      </g>
+    );
+  }
+
   persons.forEach((p) => {
     const pp = pos[p.id];
     if (!pp) return;
@@ -344,44 +402,9 @@ function TreeLines({ persons, pos }) {
         drawnCouples.add(key);
         const sp = pos[p.spouse];
         if (sp) {
-          const dotY = pp.y + CH / 2;
-          const [lx, rx] = pp.x < sp.x ? [pp.x + CW, sp.x] : [sp.x + CW, pp.x];
-          const dotX = (lx + rx) / 2;
-
           const spouseObj = pm.get(p.spouse);
           const allChildren = [...new Set([...(p.children || []), ...(spouseObj?.children || [])])];
-          const childPositions = allChildren.map((c) => pos[c]).filter(Boolean);
-
-          els.push(
-            <g key={`couple~${key}`}>
-              <line x1={lx} y1={dotY} x2={dotX - DOT_R - 1} y2={dotY} stroke={T.line} strokeWidth={1.5} />
-              <line x1={dotX + DOT_R + 1} y1={dotY} x2={rx} y2={dotY} stroke={T.line} strokeWidth={1.5} />
-              <circle cx={dotX} cy={dotY} r={DOT_R + 3} fill={T.dotRing} opacity={0.6} />
-              <circle cx={dotX} cy={dotY} r={DOT_R} fill={T.dot} />
-
-              {allChildren.length > 0 && childPositions.length > 0 && (() => {
-                const sibY = dotY + DROP;
-                const cxArr = allChildren.map((c) => pos[c]).filter(Boolean).map((cp) => cp.x + CW / 2);
-                const minCX = Math.min(...cxArr);
-                const maxCX = Math.max(...cxArr);
-                const barLeft = Math.min(minCX, dotX);
-                const barRight = Math.max(maxCX, dotX);
-                return (
-                  <g>
-                    <line x1={dotX} y1={dotY + DOT_R} x2={dotX} y2={sibY} stroke={T.line} strokeWidth={1.5} />
-                    <line x1={barLeft} y1={sibY} x2={barRight} y2={sibY} stroke={T.line} strokeWidth={1.5} />
-                    {allChildren.map((cid) => {
-                      const cp = pos[cid];
-                      if (!cp) return null;
-                      return (
-                        <line key={`c~${cid}`} x1={cp.x + CW / 2} y1={sibY} x2={cp.x + CW / 2} y2={cp.y} stroke={T.line} strokeWidth={1.5} />
-                      );
-                    })}
-                  </g>
-                );
-              })()}
-            </g>
-          );
+          els.push(renderCoupleGroup(`couple~${key}`, pp, sp, allChildren));
         }
       }
     }
@@ -419,6 +442,17 @@ function TreeLines({ persons, pos }) {
         );
       }
     }
+  });
+
+  // Draw implicit couples (parents sharing children but with no explicit spouse link).
+  implicitCouples.forEach((childrenSet, pairKey) => {
+    if (drawnCouples.has(pairKey)) return;
+    drawnCouples.add(pairKey);
+    const [idA, idB] = pairKey.split("~");
+    const posA = pos[idA], posB = pos[idB];
+    if (!posA || !posB) return;
+    const allChildren = [...childrenSet];
+    els.push(renderCoupleGroup(`implicit~${pairKey}`, posA, posB, allChildren));
   });
 
   return <g>{els}</g>;
