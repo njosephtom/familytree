@@ -1324,6 +1324,43 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
     URL.revokeObjectURL(a.href);
   };
 
+  const normalizeImportedPerson = (person, index) => ({
+    id: String(person?.id || `imported-${index}-${uid()}`),
+    name: typeof person?.name === "string" && person.name.trim() ? person.name.trim() : "Unknown",
+    familyName: typeof person?.familyName === "string" ? person.familyName : "",
+    dob: typeof person?.dob === "string" ? person.dob : "",
+    dod: typeof person?.dod === "string" ? person.dod : "",
+    sex: ["male", "female", "other"].includes(person?.sex) ? person.sex : "other",
+    job: typeof person?.job === "string" ? person.job : "",
+    location: typeof person?.location === "string" ? person.location : "",
+    phone: typeof person?.phone === "string" ? person.phone : "",
+    email: typeof person?.email === "string" ? person.email : "",
+    bio: typeof person?.bio === "string" ? person.bio : "",
+    photo: typeof person?.photo === "string" && person.photo.trim() ? person.photo : null,
+    parents: Array.isArray(person?.parents) ? person.parents.filter(Boolean).map(String) : [],
+    spouse: person?.spouse ? String(person.spouse) : null,
+    exSpouses: Array.isArray(person?.exSpouses) ? person.exSpouses.filter(Boolean).map(String) : [],
+    siblings: Array.isArray(person?.siblings) ? person.siblings.filter(Boolean).map(String) : [],
+    children: Array.isArray(person?.children) ? person.children.filter(Boolean).map(String) : [],
+    isRoot: person?.isRoot === true || person?.isRoot === "true",
+  });
+
+  const normalizeImportedLayout = (layout, importedPersons) => {
+    const fresh = computeLayout(importedPersons);
+    const valid = Object.fromEntries(
+      Object.entries(layout || {}).filter(([id, point]) =>
+        importedPersons.some((person) => person.id === id)
+        && Number.isFinite(point?.x)
+        && Number.isFinite(point?.y)
+      )
+    );
+
+    return importedPersons.reduce((acc, person) => {
+      acc[person.id] = valid[person.id] ?? fresh[person.id] ?? { x: 0, y: 0 };
+      return acc;
+    }, {});
+  };
+
   const handleImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1333,6 +1370,7 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
         let imported, importedLayout = null;
         if (file.name.toLowerCase().endsWith(".xml")) {
           const doc = new DOMParser().parseFromString(ev.target.result, "text/xml");
+          if (doc.querySelector("parsererror")) throw new Error("Invalid XML");
           imported = [...doc.querySelectorAll("person")].map((el) => {
             const obj = {};
             [...el.children].forEach((node) => {
@@ -1365,9 +1403,11 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
           }
         }
         if (Array.isArray(imported) && imported.length > 0) {
+          const normalizedImported = imported.map((person, index) => normalizeImportedPerson(person, index));
+          const normalizedLayout = normalizeImportedLayout(importedLayout, normalizedImported);
           if (window.confirm(`Import ${imported.length} people? This will replace the current tree.`)) {
-            setPersons(imported);
-            if (importedLayout) setPos(importedLayout);
+            setPersons(normalizedImported);
+            setPos(normalizedLayout);
             centered.current = false;
           }
         } else {
