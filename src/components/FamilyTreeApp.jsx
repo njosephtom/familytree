@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { saveFamilyTreePersons, saveUserTreeLayout } from "../utils/firestoreService";
 
@@ -322,6 +322,61 @@ function computeLayout(persons) {
 }
 
 /* ─────────────────────────────────────────
+   HELPERS — generation map + isolate set
+───────────────────────────────────────── */
+function computeGenMap(persons) {
+  if (!persons.length) return new Map();
+  const pm = new Map(persons.map((p) => [p.id, p]));
+  const gen = new Map();
+  persons.forEach((p) => {
+    if (!(p.parents || []).some((pid) => pm.has(pid))) gen.set(p.id, 0);
+  });
+  if (!gen.size) gen.set(persons[0].id, 0);
+  let dirty = true;
+  while (dirty) {
+    dirty = false;
+    persons.forEach((p) => {
+      const pg = (p.parents || []).map((pid) => gen.get(pid)).filter((v) => v != null);
+      if (!pg.length) return;
+      const next = Math.max(...pg) + 1;
+      if ((gen.get(p.id) ?? -1) < next) { gen.set(p.id, next); dirty = true; }
+    });
+  }
+  dirty = true;
+  while (dirty) {
+    dirty = false;
+    persons.forEach((p) => {
+      const g = gen.get(p.id);
+      if (g == null) return;
+      if (p.spouse && pm.has(p.spouse) && (gen.get(p.spouse) ?? -1) < g) {
+        gen.set(p.spouse, g); dirty = true;
+      }
+    });
+  }
+  persons.forEach((p) => { if (!gen.has(p.id)) gen.set(p.id, 0); });
+  return gen;
+}
+
+function getIsolateSet(personId, persons) {
+  if (!personId) return null;
+  const pm = new Map(persons.map((p) => [p.id, p]));
+  const p = pm.get(personId);
+  if (!p) return null;
+  const vis = new Set([personId]);
+  (p.parents  || []).forEach((id) => pm.has(id) && vis.add(id));
+  if (p.spouse && pm.has(p.spouse)) vis.add(p.spouse);
+  (p.siblings || []).forEach((id) => pm.has(id) && vis.add(id));
+  (p.children || []).forEach((cid) => {
+    if (!pm.has(cid)) return;
+    vis.add(cid);
+    const c = pm.get(cid);
+    if (c.spouse && pm.has(c.spouse)) vis.add(c.spouse);
+    (c.children || []).forEach((gcid) => pm.has(gcid) && vis.add(gcid));
+  });
+  return vis;
+}
+
+/* ─────────────────────────────────────────
    TREE LINES
    parent1 ──── ● ──── parent2
                 |
@@ -461,7 +516,7 @@ function TreeLines({ persons, pos }) {
 /* ─────────────────────────────────────────
    PERSON CARD
 ───────────────────────────────────────── */
-function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDragStart, draggable: isDraggable }) {
+function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDragStart, draggable: isDraggable, generation, dimmed }) {
   const [hov, setHov] = useState(false);
   const c = cardColors(person.sex);
   const isActive = selected || hov;
@@ -478,7 +533,7 @@ function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDra
       data-card="true"
       onMouseDown={(e) => { if (onDragStart) onDragStart(e); }}
       onClick={onClick}
-      onMouseEnter={(e) => { setHov(true); onHoverStart?.(e); }}
+      onMouseEnter={(e) => { if (!dimmed) { setHov(true); onHoverStart?.(e); } }}
       onMouseLeave={() => { setHov(false); onHoverEnd?.(); }}
       style={{
         width: CW, height: CH,
@@ -492,15 +547,20 @@ function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDra
         boxShadow: selected
           ? `0 0 0 3px ${T.selected}40, 0 4px 14px rgba(0,0,0,0.15)`
           : isActive ? "0 4px 12px rgba(0,0,0,0.14)" : "0 2px 6px rgba(0,0,0,0.08)",
-        transform: hov && !selected ? "translateY(-2px)" : "none",
+        transform: hov && !selected && !dimmed ? "translateY(-2px)" : "none",
         transition: "all 0.15s ease",
-        filter: isDead ? "saturate(0.3)" : "none",
-        opacity: isDead ? 0.78 : 1,
+        filter: !dimmed && isDead ? "saturate(0.3)" : "none",
+        opacity: dimmed ? 0.15 : isDead ? 0.78 : 1,
         boxSizing: "border-box",
         fontFamily: SF,
       }}
     >
       {isDead && <div style={{ position: "absolute", top: 3, right: 5, fontSize: 8, color: "#777", fontWeight: 800 }}>†</div>}
+      {generation != null && (
+        <div style={{ position: "absolute", bottom: 2, left: 7, fontSize: 7, color: c.text, opacity: 0.45, fontWeight: 800, letterSpacing: 0.2, pointerEvents: "none" }}>
+          Gen {generation + 1}
+        </div>
+      )}
       <div style={{
         width: 34, height: 34, borderRadius: "50%", flexShrink: 0,
         background: person.photo ? "transparent" : `${c.border}40`,
@@ -1113,6 +1173,7 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
   const [adding, setAdding]     = useState(false);  // show full add modal
   const [quickAdd, setQuickAdd] = useState(null);   // { targetId, relType }
   const [search, setSearch]     = useState("");
+  const [isolateId, setIsolateId] = useState(null);
   const [pan, setPan]           = useState(() => initialLayout?.pan ?? { x: 0, y: 0 });
   const [zoom, setZoom]         = useState(() => initialLayout?.zoom ?? 0.85);
   const [dragging, setDragging] = useState(false);
@@ -1199,6 +1260,9 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
     setLastMouse({ x: e.clientX, y: e.clientY });
   }, [dragging, lastMouse, zoom]);
   const onMouseUp = useCallback(() => { cardDragRef.current = null; setDragging(false); setLastMouse(null); }, []);
+
+  const genMap     = useMemo(() => computeGenMap(persons), [persons]);
+  const isolateSet = useMemo(() => getIsolateSet(isolateId, persons), [isolateId, persons]);
 
   // Scroll to zoom
   useEffect(() => {
@@ -1496,7 +1560,7 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
         >
           <svg width="100%" height="100%">
             <g transform={`translate(${pan.x + (typeof window !== "undefined" ? window.innerWidth / 2 : 400)}, ${pan.y + (typeof window !== "undefined" ? (window.innerHeight - 56) / 2 : 300)}) scale(${zoom})`}>
-              <TreeLines persons={persons} pos={pos} />
+              <TreeLines persons={isolateSet ? persons.filter((p) => isolateSet.has(p.id)) : persons} pos={pos} />
               {persons.map((p) => {
                 const pp = pos[p.id];
                 if (!pp) return null;
@@ -1507,6 +1571,8 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
                         person={p}
                         selected={selected === p.id}
                         draggable={dragMode}
+                        generation={genMap.get(p.id)}
+                        dimmed={isolateSet ? !isolateSet.has(p.id) : false}
                         onDragStart={dragMode ? (e) => {
                           cardWasDraggedRef.current = false;
                           const pp2 = pos[p.id];
@@ -1672,6 +1738,13 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
               <button onClick={() => { setPos(computeLayout(persons)); centered.current = false; }}
                 style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>↺ Align</button>
             )}
+            <button
+              onClick={() => { if (isolateId) setIsolateId(null); else if (selected) setIsolateId(selected); }}
+              disabled={!selected && !isolateId}
+              title={isolateId ? 'Exit isolate view' : selected ? `Isolate: ${pm.get(selected)?.name}` : 'Select a person first'}
+              style={{ background: isolateId ? T.accent : T.bg, border: `1px solid ${isolateId ? T.accent : T.panelBorder}`, color: isolateId ? '#fff' : (!selected ? T.textMuted : T.textSub), borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: (selected || isolateId) ? 'pointer' : 'not-allowed', fontWeight: 700, opacity: (!selected && !isolateId) ? 0.45 : 1 }}>
+              {isolateId ? '👁 Isolated' : '👁 Isolate'}
+            </button>
             <div style={{ width: 1, height: 20, background: T.panelBorder }} />
             <button onClick={() => exportData('json')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬆ Export</button>
             <button onClick={() => exportData('xml')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>XML</button>
