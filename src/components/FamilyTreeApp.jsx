@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { saveFamilyTreePersons, saveUserTreeLayout } from "../utils/firestoreService";
 
 /* ─────────────────────────────────────────
    DESIGN TOKENS  (FamilyEcho-inspired light)
@@ -57,63 +59,69 @@ const cardColors = (sex) =>
     : { fill: T.otherFill, border: T.otherBorder, text: T.otherText };
 
 /* ─────────────────────────────────────────
-   STORAGE
+   STORAGE — keyed by treeId so multiple trees don't clash
 ───────────────────────────────────────── */
-const STORAGE_KEY = "familyTreeV2";
+function storageKey(treeId) {
+  return treeId ? `familyTreeV2_${treeId}` : 'familyTreeV2';
+}
 
-function loadPersons() {
+function loadPersons(treeId, initialPersons) {
+  // initialPersons from Firestore takes priority
+  if (initialPersons && initialPersons.length > 0) return initialPersons;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(treeId));
     if (raw) return JSON.parse(raw);
   } catch { /* ignore */ }
 
-  // Try migrating from old Redux format
-  try {
-    const old = localStorage.getItem("familyTree");
-    if (old) {
-      const state = JSON.parse(old);
-      const { people = {}, relationships = [], rootPersonId } = state;
-      if (!Object.keys(people).length) return [];
+  // Try migrating from old Redux format (only for default tree)
+  if (!treeId) {
+    try {
+      const old = localStorage.getItem('familyTree');
+      if (old) {
+        const state = JSON.parse(old);
+        const { people = {}, relationships = [], rootPersonId } = state;
+        if (!Object.keys(people).length) return [];
 
-      const persons = Object.values(people).map((p) => {
-        const id = p.id;
-        const childRels = relationships.filter((r) => r.fromId === id && r.type === "child").map((r) => r.toId);
-        const parentRels = relationships.filter((r) => r.toId === id && r.type === "parent").map((r) => r.fromId)
-          .concat(relationships.filter((r) => r.fromId === id && r.type === "parent").map((r) => r.toId));
-        const spouseRel = relationships.find((r) => (r.fromId === id || r.toId === id) && (r.type === "spouse" || r.type === "ex_spouse"));
-        const spouse = spouseRel ? (spouseRel.fromId === id ? spouseRel.toId : spouseRel.fromId) : null;
-        const siblingRels = relationships.filter((r) => r.fromId === id && r.type === "sibling").map((r) => r.toId);
+        const persons = Object.values(people).map((p) => {
+          const id = p.id;
+          const childRels = relationships.filter((r) => r.fromId === id && r.type === 'child').map((r) => r.toId);
+          const parentRels = relationships.filter((r) => r.toId === id && r.type === 'parent').map((r) => r.fromId)
+            .concat(relationships.filter((r) => r.fromId === id && r.type === 'parent').map((r) => r.toId));
+          const spouseRel = relationships.find((r) => (r.fromId === id || r.toId === id) && (r.type === 'spouse' || r.type === 'ex_spouse'));
+          const spouse = spouseRel ? (spouseRel.fromId === id ? spouseRel.toId : spouseRel.fromId) : null;
+          const siblingRels = relationships.filter((r) => r.fromId === id && r.type === 'sibling').map((r) => r.toId);
 
-        return {
-          id,
-          name: `${p.givenNames || ""} ${p.surname || ""}`.trim() || "Unknown",
-          sex: p.gender === "Male" ? "male" : p.gender === "Female" ? "female" : "other",
-          dob: p.birthDate || "",
-          dod: p.deathDate || "",
-          job: p.profession || "",
-          location: p.birthPlace || p.address || "",
-          phone: p.phone || "",
-          email: p.email || "",
-          bio: p.bio || "",
-          photo: p.photo || null,
-          familyName: p.surname || "",
-          exSpouses: [],
-          parents: [...new Set(parentRels)],
-          spouse,
-          siblings: siblingRels,
-          children: childRels,
-          isRoot: id === rootPersonId,
-        };
-      });
-      return persons;
-    }
-  } catch { /* ignore */ }
+          return {
+            id,
+            name: `${p.givenNames || ''} ${p.surname || ''}`.trim() || 'Unknown',
+            sex: p.gender === 'Male' ? 'male' : p.gender === 'Female' ? 'female' : 'other',
+            dob: p.birthDate || '',
+            dod: p.deathDate || '',
+            job: p.profession || '',
+            location: p.birthPlace || p.address || '',
+            phone: p.phone || '',
+            email: p.email || '',
+            bio: p.bio || '',
+            photo: p.photo || null,
+            familyName: p.surname || '',
+            exSpouses: [],
+            parents: [...new Set(parentRels)],
+            spouse,
+            siblings: siblingRels,
+            children: childRels,
+            isRoot: id === rootPersonId,
+          };
+        });
+        return persons;
+      }
+    } catch { /* ignore */ }
+  }
 
   return [];
 }
 
-function savePersons(persons) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(persons));
+function savePersons(persons, treeId) {
+  localStorage.setItem(storageKey(treeId), JSON.stringify(persons));
 }
 
 const SETTINGS_KEY = "familyTreeSettings";
@@ -1058,9 +1066,9 @@ function QuickAddModal({ targetPerson, defaultRelType, persons, onSave, onClose 
 /* ─────────────────────────────────────────
    MAIN APP
 ───────────────────────────────────────── */
-export default function FamilyTreeApp({ username, onLogout }) {
-  const [persons, setPersons] = useState(() => loadPersons());
-  const [pos, setPos]         = useState({});
+export default function FamilyTreeApp({ username, onLogout, treeId, initialPersons, uid, initialLayout, toolbarPortal, onInvite }) {
+  const [persons, setPersons] = useState(() => loadPersons(treeId, initialPersons));
+  const [pos, setPos]         = useState(() => initialLayout?.pos ?? {});
   const [selected, setSelected] = useState(null);
   const [popup, setPopup]       = useState(null);       // person id whose popup is open
   const [tooltip, setTooltip]   = useState(null);       // { person, x, y } for hover card
@@ -1071,12 +1079,13 @@ export default function FamilyTreeApp({ username, onLogout }) {
   const [adding, setAdding]     = useState(false);  // show full add modal
   const [quickAdd, setQuickAdd] = useState(null);   // { targetId, relType }
   const [search, setSearch]     = useState("");
-  const [pan, setPan]           = useState({ x: 0, y: 0 });
-  const [zoom, setZoom]         = useState(0.85);
+  const [pan, setPan]           = useState(() => initialLayout?.pan ?? { x: 0, y: 0 });
+  const [zoom, setZoom]         = useState(() => initialLayout?.zoom ?? 0.85);
   const [dragging, setDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState(null);
   const canvasRef        = useRef();
-  const centered         = useRef(false);
+  // Skip auto-centering if we restored a saved viewport position
+  const centered         = useRef(!!initialLayout?.pan);
   const importFileRef    = useRef();
   const clickTimerRef    = useRef(null);
   const cardDragRef      = useRef(null);  // { id, origX, origY, startMouseX, startMouseY, dragged }
@@ -1107,9 +1116,25 @@ export default function FamilyTreeApp({ username, onLogout }) {
     }
   }, [pos, zoom]);
 
-  // Persist to localStorage
-  useEffect(() => { savePersons(persons); }, [persons]);
+  // Persist persons to localStorage and Firestore (shared tree data)
+  useEffect(() => {
+    savePersons(persons, treeId);
+    if (treeId) {
+      saveFamilyTreePersons(treeId, persons).catch(() => {});
+    }
+  }, [persons, treeId]);
   useEffect(() => { saveSettings(settings); }, [settings]);
+
+  // Persist layout (card positions + viewport) under the user's own document
+  const layoutSaveTimer = useRef(null);
+  useEffect(() => {
+    if (!uid || !treeId || Object.keys(pos).length === 0) return;
+    if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current);
+    layoutSaveTimer.current = setTimeout(() => {
+      saveUserTreeLayout(uid, treeId, { pos, pan, zoom }).catch(() => {});
+    }, 2000);
+    return () => { if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current); };
+  }, [pos, pan, zoom, uid, treeId]);
 
   // Canvas pan
   const onMouseDown = useCallback((e) => {
@@ -1370,7 +1395,7 @@ export default function FamilyTreeApp({ username, onLogout }) {
     : [];
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: T.bg, display: "flex", flexDirection: "column", fontFamily: SF, overflow: "hidden" }}>
+    <div style={{ width: "100%", height: "100%", background: T.bg, display: "flex", flexDirection: "column", fontFamily: SF, overflow: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
         * { box-sizing: border-box; }
@@ -1378,100 +1403,6 @@ export default function FamilyTreeApp({ username, onLogout }) {
         ::-webkit-scrollbar-track { background: ${T.bg}; }
         ::-webkit-scrollbar-thumb { background: ${T.panelBorder}; border-radius: 3px; }
       `}</style>
-
-      {/* ── Toolbar ── */}
-      <div style={{ height: 56, background: T.toolbar, borderBottom: `1px solid ${T.toolbarBorder}`, display: "flex", alignItems: "center", gap: 14, padding: "0 18px", flexShrink: 0, zIndex: 300, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 6 }}>
-          <span style={{ fontSize: 22 }}>🌳</span>
-          <div>
-            <div style={{ color: T.text, fontSize: 15, fontWeight: 800, lineHeight: 1 }}>Family Tree</div>
-            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 600 }}>{persons.length} members{username ? ` · ${username}` : ""}</div>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: T.textMuted }}>🔍</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search members…"
-            style={{ width: "100%", background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 8, padding: "6px 10px 6px 30px", fontSize: 12, outline: "none", fontFamily: SF }}
-          />
-          {search && (
-            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: T.white, border: `1px solid ${T.panelBorder}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 500, maxHeight: 260, overflowY: "auto" }}>
-              {filtered.length === 0
-                ? <div style={{ color: T.textMuted, fontSize: 12, padding: "12px 14px" }}>No results</div>
-                : filtered.map((p) => {
-                  const pc = cardColors(p.sex);
-                  return (
-                    <div key={p.id} onClick={() => { setSelected(p.id); setPopup(p.id); setSearch(""); }}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${T.bg}` }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = T.bg}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: pc.fill, border: `1.5px solid ${pc.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ color: pc.text, fontSize: 9, fontWeight: 800 }}>{p.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
-                      </div>
-                      <div>
-                        <div style={{ color: T.text, fontSize: 12, fontWeight: 700 }}>{p.name}</div>
-                        {p.location && <div style={{ color: T.textMuted, fontSize: 10 }}>📍 {p.location}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-        </div>
-
-        {/* Zoom + Reset + Add + Logout */}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 7, alignItems: "center" }}>
-          {[["−", 0.87], ["+", 1.15]].map(([l, f]) => (
-            <button key={l} onClick={() => setZoom((z) => Math.min(2.5, Math.max(0.2, z * f)))}
-              style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 7, width: 30, height: 30, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
-              {l}
-            </button>
-          ))}
-          <button onClick={resetView} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: "0 10px", height: 30, fontSize: 11, cursor: "pointer", fontWeight: 700 }}>
-            Reset
-          </button>
-          <button
-            onClick={() => setDragMode((d) => !d)}
-            title="Toggle free-drag mode — drag cards to reposition them"
-            style={{ background: dragMode ? T.accent : T.bg, border: `1px solid ${dragMode ? T.accent : T.panelBorder}`, color: dragMode ? "#fff" : T.textSub, borderRadius: 7, padding: "0 10px", height: 30, fontSize: 11, cursor: "pointer", fontWeight: 700 }}>
-            {dragMode ? "⧏ Dragging" : "⧏ Drag"}
-          </button>
-          {dragMode && (
-            <button
-              onClick={() => { setPos(computeLayout(persons)); centered.current = false; }}
-              title="Reset all cards to auto-computed positions"
-              style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: "0 10px", height: 30, fontSize: 11, cursor: "pointer", fontWeight: 700 }}>
-              ↺ Align
-            </button>
-          )}
-          <div style={{ width: 1, height: 24, background: T.panelBorder }} />
-          <button onClick={() => exportData("json")} title="Export as JSON" style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-            ⬆ Export
-          </button>
-          <button onClick={() => exportData("xml")} title="Export as XML" style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-            XML
-          </button>
-          <button onClick={() => importFileRef.current.click()} title="Import JSON or XML" style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-            ⬇ Import
-          </button>
-          <input ref={importFileRef} type="file" accept=".json,.xml" style={{ display: "none" }} onChange={handleImport} />
-          <button onClick={() => setShowSettings(true)} title="Settings" style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "7px 12px", fontSize: 14, cursor: "pointer", fontWeight: 700 }}>
-            ⚙️
-          </button>
-          <button onClick={() => setAdding(true)} style={{ background: T.accent, border: "none", color: "#fff", borderRadius: 8, padding: "7px 16px", fontSize: 12, cursor: "pointer", fontWeight: 800 }}>
-            ＋ Add Member
-          </button>
-          {onLogout && (
-            <button onClick={onLogout} style={{ background: "none", border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "7px 14px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-              Logout
-            </button>
-          )}
-        </div>
-      </div>
 
       {/* ── Canvas + Panel ── */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
@@ -1600,6 +1531,84 @@ export default function FamilyTreeApp({ username, onLogout }) {
       )}
       {tooltip && <HoverTooltip person={tooltip.person} x={tooltip.x} y={tooltip.y} fields={settings.tooltipFields} />}
       {showSettings && <SettingsModal settings={settings} onChange={setSettings} onClose={() => setShowSettings(false)} />}
+
+      {/* ── Toolbar portal into Dashboard's nav bar ── */}
+      {toolbarPortal && createPortal(
+        <>
+          {/* Member count badge */}
+          <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', paddingRight: 10, borderRight: `1px solid ${T.panelBorder}`, marginRight: 4, flexShrink: 0 }}>
+            {persons.length} members
+          </span>
+
+          {/* Search */}
+          <div style={{ position: 'relative', flex: 1, maxWidth: 220, minWidth: 80 }}>
+            <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: T.textMuted, pointerEvents: 'none' }}>🔍</span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search members…"
+              style={{ width: '100%', background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 8, padding: '5px 10px 5px 28px', fontSize: 12, outline: 'none', fontFamily: SF }}
+            />
+            {search && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: T.white, border: `1px solid ${T.panelBorder}`, borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 9999, maxHeight: 260, overflowY: 'auto' }}>
+                {filtered.length === 0
+                  ? <div style={{ color: T.textMuted, fontSize: 12, padding: '12px 14px' }}>No results</div>
+                  : filtered.map((p) => {
+                    const pc = cardColors(p.sex);
+                    return (
+                      <div key={p.id} onClick={() => { setSelected(p.id); setPopup(p.id); setSearch(''); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderBottom: `1px solid ${T.bg}` }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = T.bg}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                        <div style={{ width: 26, height: 26, borderRadius: '50%', background: pc.fill, border: `1.5px solid ${pc.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <span style={{ color: pc.text, fontSize: 9, fontWeight: 800 }}>{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
+                        </div>
+                        <div>
+                          <div style={{ color: T.text, fontSize: 12, fontWeight: 700 }}>{p.name}</div>
+                          {p.location && <div style={{ color: T.textMuted, fontSize: 10 }}>📍 {p.location}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+            {onInvite && (
+              <button onClick={onInvite} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>
+                👥 Invite
+              </button>
+            )}
+            <div style={{ width: 1, height: 20, background: T.panelBorder }} />
+            {[['−', 0.87], ['+', 1.15]].map(([l, f]) => (
+              <button key={l} onClick={() => setZoom((z) => Math.min(2.5, Math.max(0.2, z * f)))}
+                style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 7, width: 28, height: 28, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                {l}
+              </button>
+            ))}
+            <button onClick={resetView} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Reset</button>
+            <button
+              onClick={() => setDragMode((d) => !d)}
+              style={{ background: dragMode ? T.accent : T.bg, border: `1px solid ${dragMode ? T.accent : T.panelBorder}`, color: dragMode ? '#fff' : T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
+              {dragMode ? '⧏ Dragging' : '⧏ Drag'}
+            </button>
+            {dragMode && (
+              <button onClick={() => { setPos(computeLayout(persons)); centered.current = false; }}
+                style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>↺ Align</button>
+            )}
+            <div style={{ width: 1, height: 20, background: T.panelBorder }} />
+            <button onClick={() => exportData('json')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬆ Export</button>
+            <button onClick={() => exportData('xml')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>XML</button>
+            <button onClick={() => importFileRef.current.click()} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬇ Import</button>
+            <input ref={importFileRef} type="file" accept=".json,.xml" style={{ display: 'none' }} onChange={handleImport} />
+            <button onClick={() => setShowSettings(true)} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 14, cursor: 'pointer', fontWeight: 700 }}>⚙️</button>
+            <button onClick={() => setAdding(true)} style={{ background: T.accent, border: 'none', color: '#fff', borderRadius: 8, padding: '5px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 800 }}>＋ Add Member</button>
+          </div>
+        </>,
+        toolbarPortal
+      )}
     </div>
   );
 }

@@ -1,42 +1,41 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { restoreAuth } from './store/slices/authSlice';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import InviteAccept from './pages/InviteAccept';
 
 function ProtectedRoute({ children }) {
-  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
   return children;
 }
 
-export default function App() {
-  const dispatch = useDispatch();
-
-  useEffect(() => {
-    // Restore authentication on app load
-    dispatch(restoreAuth());
-  }, [dispatch]);
-
+function AppRoutes() {
+  const { user } = useAuth();
   return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-    </Router>
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route path="/invite/:inviteId" element={
+        <ProtectedRoute>
+          <InviteAccept />
+        </ProtectedRoute>
+      } />
+      <Route path="/dashboard" element={
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <AppRoutes />
+      </Router>
+    </AuthProvider>
   );
 }
