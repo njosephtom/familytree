@@ -1,231 +1,139 @@
-# Family Tree - React Application
-
-A modern, interactive family tree builder application that replicates the core functionality of Family Echo. Build, visualize, and manage your family history with an intuitive interface.
-
-## Features
-
-### Core Functionality
-- **Root Person Setup**: Start by entering your own details (given names, surname, gender, birth/death dates, birthplace)
-- **Interactive Family Tree Building**: Add family members with relationships:
-  - Parents
-  - Children
-  - Spouses/Partners
-  - Siblings
-
-### Person Details
-Comprehensive profile information for each family member:
-- Names (given names, surname, nickname, title, suffix)
-- Demographics (gender, birth date, death date)
-- Location (birthplace, death place, burial place)
-- Contact Info (email, phone, address, Skype)
-- Professional Info (profession, company)
-- Personal Info (interests, activities, biography)
-- Photo support (via URL)
-- Color labels for organization
-
-### Visual Display
-- Interactive tree visualization showing family relationships
-- Expandable tree structure
-- Color-coded family members
-- Photo display for each person
-- Quick access to details from tree view
-
-### Data Management
-- **Privacy**: Mock authentication system - only signed-in users can edit
-- **Import/Export**:
-  - GEDCOM format support (standard genealogy format)
-  - JSON format for backup and sharing
-  - Easy import from files
-- **Storage**: Local browser storage for tree data
-- **Color Labels**: Assign custom colors to people for organization
-
-## Tech Stack
-
-- **Frontend Framework**: React 19
-- **State Management**: Redux Toolkit
-- **Styling**: Tailwind CSS
-- **Build Tool**: Vite
-- **Routing**: React Router
-- **Forms**: React Hook Form
-- **Tree Visualization**: React Flow (Interactive node-based graph visualization)
-- **Storage**: Browser localStorage
-
-## Getting Started
-
-### Installation
-
-1. Navigate to the project directory:
-```bash
-cd familytree
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Start the development server:
-```bash
-npm run dev
-```
-
-The application will open at `http://localhost:3000`
-
-### Building for Production
-
-```bash
-npm run build
-```
-
-### Preview Production Build
-
-```bash
-npm preview
-```
-
-## Usage
-
-### Initial Setup
-
-1. **Sign In**: Use the login page with any username/password (minimum 3 characters for demo)
-   - This creates a mock session to enable editing features
-
-2. **Create Root Person**: Enter your basic information
-   - Given names and surname
-   - Gender
-   - Birth and death dates
-   - Birthplace
-
-3. **Build Your Tree**: 
-   - Click on any person to select them
-   - Use the "Add Family Member" buttons to add parents, children, spouses, or siblings
-   - Click on added members to edit their details
-
-### Managing Family Members
-
-- **View Details**: Click on any person in the tree to view their full profile
-- **Edit**: Click the person's card and modify any information
-- **Delete**: Remove a person from the tree (confirmation required)
-- **Add Relationships**: Use contextual buttons to add related family members
-
-### Importing & Exporting
-
-- **Export as GEDCOM**: Compatible with genealogy software
-- **Export as JSON**: For backup or sharing your tree
-- **Import from JSON**: Restore previously exported trees
-- **Import GEDCOM**: Convert genealogy data from other sources
-
-### Color Labels
-
-Organize your family tree by assigning color labels to people:
-1. Select a person to edit
-2. Choose from 8 color options
-3. Save to apply the color
-
-## Project Structure
-
-```
-src/
-├── components/
-│   ├── AddFamilyMemberButtons.jsx    # Button group for adding relations
-│   ├── FamilyTreeView.jsx             # Tree visualization component
-│   ├── PersonCard.jsx                 # Individual person display card
-│   └── PersonForm.jsx                 # Form for editing person details
-├── pages/
-│   ├── Dashboard.jsx                  # Main app page
-│   └── Login.jsx                      # Authentication page
-├── store/
-│   ├── store.js                       # Redux store configuration
-│   └── slices/
-│       ├── authSlice.js               # Authentication state
-│       └── familyTreeSlice.js         # Family tree data state
-├── utils/
-│   ├── gedcomParser.js                # GEDCOM import/export
-│   └── storageService.js              # Local storage management
-├── hooks/
-│   └── (custom hooks for future expansion)
-├── App.jsx                            # Main app with routing
-├── main.jsx                           # Entry point
-└── index.css                          # Global styles with Tailwind
-```
-
-## Data Structure
-
-### Person Object
-```javascript
-{
-  id: string,                    // Unique identifier
-  givenNames: string,            // First name(s)
-  surname: string,               // Last name
-  nickname: string,              // Optional nickname
-  gender: 'Male' | 'Female' | 'Other',
-  birthDate: string,             // YYYY-MM-DD format
-  birthPlace: string,            // Birth location
-  deathDate: string,             // Death date (optional)
-  email: string,                 // Contact email
-  phone: string,                 // Phone number
-  address: string,               // Physical address
-  profession: string,            // Job/occupation
-  interests: string,             // Hobbies and interests
-  bio: string,                   // Biography/notes
-  photo: string,                 // URL to photo
-  colorLabel: string             // Hex color code for organization
-}
-```
-
-### Relationship Types
-- `parent`: Person A is parent of Person B
-- `child`: Person A is child of Person B
-- `spouse`: Person A is spouse of Person B (bidirectional)
-- `sibling`: Person A is sibling of Person B (bidirectional)
-
-## Authentication & Privacy
-
-The application uses a **mock authentication system**:
-- Users sign in with any username/password
-- Authentication state is stored in Redux and localStorage
-- Editing features are disabled until signed in
-- Sign out clears the session but preserves data
-
-**Future Enhancements**: Can be upgraded to real authentication (OAuth, Firebase, etc.)
-
-## Storage
-
-All data is stored locally in the browser:
-- Family tree data persists across sessions
-- Export functionality allows backing up to files
-- Import functionality restores from backups
-
-**Note**: Data is stored per browser/device. To share, use export/import features.
-
-## Browser Support
-
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-
-## Future Enhancements
-
-- Real authentication system
-- Multiple tree sharing/collaboration
-- Advanced visualization (D3 tree diagrams)
-- Print-friendly reports
-- Timeline view
-- DNA matching integration
-- Mobile app version
-- Cloud sync
-- Advanced search/filtering
-- Photo album per person
-
-## License
-
-ISC
-
-## Contributing
-
-Feel free to fork and submit pull requests for improvements.
-
----
-
-**Created with React, Redux, and Tailwind CSS** ❤️
+ # Family Tree
+ 
+ A collaborative family tree builder built with React, Firebase, and a custom canvas-style tree renderer inspired by Family Echo.
+ 
+ This project lets users create multiple family trees, invite relatives, store shared tree data in Firestore, and keep personalized layouts per user.
+ 
+ ## Current Stack
+ 
+ - React 19
+ - Vite 8
+ - React Router 7
+ - Firebase 12
+   - Firebase Authentication
+   - Cloud Firestore
+ - Tailwind CSS 4 for global styling primitives
+ - Custom tree rendering with SVG + `foreignObject` cards
+ - Browser localStorage for local persistence and import/export fallback
+ 
+ ## Rendering Approach
+ 
+ The family tree is not currently powered by React Flow.
+ 
+ Instead, the app uses a custom canvas-style renderer in [src/components/FamilyTreeApp.jsx](src/components/FamilyTreeApp.jsx):
+ 
+ - A custom `computeLayout()` function calculates generation-based positions
+ - Relationship connectors are drawn with SVG in `TreeLines`
+ - Person cards are rendered as HTML inside SVG via `foreignObject`
+ - Users can pan, zoom, drag cards, auto-align, search, and edit directly in the same surface
+ 
+ This gives the app a lightweight, Family Echo-style editing experience while keeping the layout logic fully customizable.
+ 
+ ## Current Features
+ 
+ - Email/password authentication
+ - Google sign-in
+ - Forgot-password / reset-password flow
+ - Multiple family trees per user
+ - Invite links for other members
+ - Real-time online presence per tree
+ - Personalized layout persistence per user
+ - Shared family member data stored in Firestore
+ - Search members inside the active tree
+ - JSON export/import
+ - XML export/import
+ - Custom drag mode for manual repositioning
+ - Per-user saved pan/zoom/card layout
+ - Tree toolbar merged into a single top navigation bar
+ 
+ ## Data Model
+ 
+ ### Firestore collections
+ 
+ - `users/{uid}`
+   - profile fields
+   - `familyTreeIds`
+   - `treeLayouts.{treeId}` for each user's saved positions and viewport
+ 
+ - `familyTrees/{treeId}`
+   - tree metadata
+   - `persons`
+   - `members`
+ 
+ - `familyTrees/{treeId}/presence/{uid}`
+   - real-time online presence records
+ 
+ - `invites/{inviteId}`
+   - tree invite metadata and status
+ 
+ ## Key Application Files
+ 
+ ```text
+ src/
+ ├── App.jsx                     # App shell, routing, Firebase config fallback screen
+ ├── firebase.js                 # Firebase initialization
+ ├── components/
+ │   └── FamilyTreeApp.jsx       # Main canvas-style tree UI and layout engine
+ ├── context/
+ │   └── AuthContext.jsx         # Firebase auth state and auth actions
+ ├── pages/
+ │   ├── Dashboard.jsx           # Tree tabs, presence, layout loading, invite modal
+ │   ├── InviteAccept.jsx        # Invite acceptance flow
+ │   └── Login.jsx               # Email/Google auth and reset password
+ └── utils/
+     ├── firestoreService.js     # Firestore reads/writes for trees, presence, layouts, invites
+     ├── gedcomParser.js         # Legacy/utility parsing support
+     └── storageService.js       # Local storage helpers
+ ```
+ 
+ ## Local Development
+ 
+ ### Install
+ 
+ ```bash
+ npm install
+ ```
+ 
+ ### Run development server
+ 
+ ```bash
+ npm run dev
+ ```
+ 
+ ### Build for production
+ 
+ ```bash
+ npm run build
+ ```
+ 
+ ## Environment Variables
+ 
+ Create a `.env.local` file with:
+ 
+ ```env
+ VITE_FIREBASE_API_KEY=...
+ VITE_FIREBASE_AUTH_DOMAIN=...
+ VITE_FIREBASE_PROJECT_ID=...
+ VITE_FIREBASE_STORAGE_BUCKET=...
+ VITE_FIREBASE_MESSAGING_SENDER_ID=...
+ VITE_FIREBASE_APP_ID=...
+ ```
+ 
+ For Vercel deployments, set the same `VITE_FIREBASE_*` variables in Project Settings → Environment Variables.
+ 
+ ## Deployment Notes
+ 
+ - The app is configured as a Vite SPA
+ - Vercel needs route rewrites to `index.html`
+ - Firebase Auth authorized domains must include the deployed host if Google login is enabled
+ - Firebase values should be stored without leading or trailing spaces
+ 
+ ## Import / Export Notes
+ 
+ - JSON export stores `{ version, persons, layout }`
+ - XML export stores person records plus card positions
+ - XML import is hardened to normalize missing fields and recover from partial or invalid layout data
+ 
+ ## Status
+ 
+ Current implementation is centered around the custom canvas-style tree renderer. If the project later moves to another node-graph solution such as React Flow + ELK, that would be a future architectural change rather than the current production setup.
