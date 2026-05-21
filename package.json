@@ -29,6 +29,7 @@
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^10.4.0",

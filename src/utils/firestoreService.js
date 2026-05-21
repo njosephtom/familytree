@@ -1,12 +1,14 @@
 import {
   doc,
   getDoc,
+  getDocFromServer,
   setDoc,
   updateDoc,
   addDoc,
   collection,
   serverTimestamp,
   arrayUnion,
+  arrayRemove,
   query,
   where,
   getDocs,
@@ -63,7 +65,8 @@ export async function createFamilyTree(uid, name) {
 }
 
 export async function getFamilyTree(treeId) {
-  const snap = await getDoc(doc(db, 'familyTrees', treeId));
+  // Use getDocFromServer to bypass in-memory cache and ensure fresh data after imports/edits
+  const snap = await getDocFromServer(doc(db, 'familyTrees', treeId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
@@ -76,10 +79,30 @@ export async function getUserFamilyTrees(uid) {
 }
 
 export async function saveFamilyTreePersons(treeId, persons) {
+  // Strip base64 photo data before saving — Firestore has a 1 MiB document limit.
+  // Large photos must be stored in Firebase Storage instead. Photos remain visible
+  // in the current session (held in React state) but will not survive a reload.
+  const safePersons = persons.map((person) => {
+    const { photo, ...rest } = person;
+    const base = photo && photo.length > 50_000 ? rest : { ...rest, ...(photo !== undefined ? { photo } : {}) };
+
+    // Firestore rejects undefined values, so drop any undefined fields.
+    return Object.fromEntries(Object.entries(base).filter(([, value]) => value !== undefined));
+  });
   await updateDoc(doc(db, 'familyTrees', treeId), {
-    persons,
+    persons: safePersons,
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function deleteFamilyTree(treeId, ownerUid) {
+  // Remove from owner's tree list and wipe saved layout
+  await updateDoc(doc(db, 'users', ownerUid), {
+    familyTreeIds: arrayRemove(treeId),
+    [`treeLayouts.${treeId}`]: deleteField(),
+  });
+  // Delete the tree document itself
+  await deleteDoc(doc(db, 'familyTrees', treeId));
 }
 
 // ── Invites ───────────────────────────────────────────────────────────────────
