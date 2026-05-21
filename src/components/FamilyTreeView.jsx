@@ -238,12 +238,17 @@ export default function FamilyTreeView({ onSelectPerson, onEditPerson, onQuickAd
     return nodeArray;
   }, [people, relationships, rootPersonId, selectedPersonId]);
 
+  const [reactFlowNodes, setNodes, onNodesChange] = useNodesState(nodes);
+
+  useEffect(() => { setNodes(nodes); }, [nodes, setNodes]);
+
   // -- Edges (smart handle routing) ------------------------------------------
   const edges = useMemo(() => {
     const seen    = new Set();
     const edgeList = [];
     const posMap  = {};
-    nodes.forEach(n => { posMap[n.id] = n.position; });
+    const liveNodes = reactFlowNodes.length > 0 ? reactFlowNodes : nodes;
+    liveNodes.forEach(n => { posMap[n.id] = n.position; });
 
     relationships.forEach(rel => {
       const relType = normalizeRelationshipType(rel.type);
@@ -280,12 +285,10 @@ export default function FamilyTreeView({ onSelectPerson, onEditPerson, onQuickAd
     });
 
     return edgeList;
-  }, [relationships, prefs, nodes]);
+  }, [relationships, prefs, nodes, reactFlowNodes]);
 
-  const [reactFlowNodes, setNodes, onNodesChange] = useNodesState(nodes);
   const [reactFlowEdges, setEdges, onEdgesChange] = useEdgesState(edges);
 
-  useEffect(() => { setNodes(nodes); }, [nodes, setNodes]);
   useEffect(() => { setEdges(edges); }, [edges, setEdges]);
 
   // -- Escape closes everything -----------------------------------------------

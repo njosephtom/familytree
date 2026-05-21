@@ -15,6 +15,7 @@ export default function Login() {
   const [password, setPassword]       = useState('');
   const [error, setError]             = useState('');
   const [loading, setLoading]         = useState(false);
+  const [rememberMe, setRememberMe]   = useState(false);
 
   // Preserve ?invite=xxx through the login flow
   const params     = new URLSearchParams(location.search);
@@ -72,181 +73,231 @@ export default function Login() {
   // ── Forgot-password screen ───────────────────────────────────────────────
   if (isForgot) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center p-4">
-        <div className="w-full max-w-sm">
-          <div className="card">
-            <div className="text-center mb-6">
-              <h1 className="text-3xl font-bold text-gray-800 mb-2">🌳 Family Tree</h1>
-              <p className="text-gray-600">Reset your password</p>
+      <PageShell>
+        <AuthCard>
+          <BrandMark />
+          <h1 className="w-full text-[clamp(1.75rem,6vw,2.15rem)] font-bold text-[#0f172a]">Reset password</h1>
+
+          {resetSent ? (
+            <div className="flex w-full flex-col items-center gap-3 text-center">
+              <p className="text-sm font-semibold text-[#0f172a]">Reset link sent</p>
+              <p className="text-sm text-[#475569]">Check your inbox at <strong>{email}</strong>.</p>
+              <BtnPrimary onClick={() => { setIsForgot(false); setResetSent(false); setError(''); }}>
+                Back to Sign in
+              </BtnPrimary>
             </div>
-
-            {resetSent ? (
-              <div className="text-center space-y-4">
-                <div className="text-4xl">📧</div>
-                <p className="text-gray-700 font-medium">Reset link sent!</p>
-                <p className="text-sm text-gray-500">
-                  Check your inbox at <strong>{email}</strong> and follow the link to set a new password.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => { setIsForgot(false); setResetSent(false); setError(''); }}
-                  className="btn btn-primary w-full"
-                >
-                  Back to Sign In
-                </button>
+          ) : (
+            <form onSubmit={handleForgot} className="flex w-full flex-col gap-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="reset-email" className="text-sm font-medium text-[#374151]">Email</label>
+                <input
+                  id="reset-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  required
+                  autoFocus
+                  className="w-full rounded border border-[#cbd5e1] bg-[#ffffff] px-3 py-2 text-sm text-[#0f172a] placeholder:text-[#94a3b8] outline-none transition focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6]"
+                />
               </div>
-            ) : (
-              <form onSubmit={handleForgot} className="space-y-4">
-                <div className="form-group">
-                  <label htmlFor="reset-email">Email address</label>
-                  <input
-                    id="reset-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    required
-                    autoFocus
-                  />
-                </div>
 
-                {error && (
-                  <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded text-sm">
-                    {error}
-                  </div>
-                )}
+              {error && (
+                <div className="rounded border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm text-[#b91c1c]">{error}</div>
+              )}
 
-                <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-                  {loading ? 'Sending…' : 'Send Reset Link'}
-                </button>
+              <BtnPrimary type="submit" disabled={loading}>
+                {loading ? 'Sending…' : 'Send reset link'}
+              </BtnPrimary>
 
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => { setIsForgot(false); setError(''); }}
-                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                  >
-                    ← Back to Sign In
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      </div>
+              <button
+                type="button"
+                onClick={() => { setIsForgot(false); setError(''); }}
+                className="self-center text-sm text-[#475569] underline hover:text-[#0f172a] border-0 bg-transparent cursor-pointer outline-none"
+              >
+                Back to Sign in
+              </button>
+            </form>
+          )}
+        </AuthCard>
+      </PageShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="card">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">🌳 Family Tree</h1>
-            <p className="text-gray-600">Connect Your Generations</p>
-          </div>
+    <PageShell>
+      <AuthCard>
+        <BrandMark />
 
-          {inviteId && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-              You have a family tree invite! Sign in or create an account to accept it.
+        <h1 className="w-full text-[clamp(1.75rem,6vw,2.15rem)] font-bold text-[#0f172a]">
+          {isSignUp ? 'Sign up' : 'Sign in'}
+        </h1>
+
+        {inviteId && (
+          <div className="w-full rounded border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-sm text-[#1d4ed8]">
+            You have a family tree invite. Sign in or create an account to accept it.
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+          {isSignUp && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="displayName" className="text-sm font-medium text-[#374151]">Name</label>
+              <input
+                id="displayName"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Your name"
+                required
+                autoFocus
+                className="w-full rounded border border-[#cbd5e1] bg-[#ffffff] px-3 py-2 text-sm text-[#0f172a] placeholder:text-[#94a3b8] outline-none transition focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6]"
+              />
             </div>
           )}
 
-          {/* Google */}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="email" className="text-sm font-medium text-[#374151]">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              required
+              autoFocus={!isSignUp}
+              className="w-full rounded border border-[#cbd5e1] bg-[#ffffff] px-3 py-2 text-sm text-[#0f172a] placeholder:text-[#94a3b8] outline-none transition focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6]"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <label htmlFor="password" className="text-sm font-medium text-[#374151]">Password</label>
+              {!isSignUp && (
+                <button
+                  type="button"
+                  onClick={() => { setIsForgot(true); setError(''); setResetSent(false); }}
+                  className="text-xs text-[#475569] underline hover:text-[#0f172a] border-0 bg-transparent cursor-pointer outline-none"
+                >
+                  Forgot your password?
+                </button>
+              )}
+            </div>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••"
+              required
+              className="w-full rounded border border-[#cbd5e1] bg-[#ffffff] px-3 py-2 text-sm text-[#0f172a] placeholder:text-[#94a3b8] outline-none transition focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6]"
+            />
+          </div>
+
+          {!isSignUp && (
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-[#374151] select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="h-4 w-4 rounded border-[#cbd5e1] accent-[#0f172a]"
+              />
+              Remember me
+            </label>
+          )}
+
+          {error && (
+            <div className="rounded border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm text-[#b91c1c]">{error}</div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded bg-[#0f172a] py-2 text-sm font-semibold text-white transition hover:bg-[#1e293b] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? 'Please wait…' : isSignUp ? 'Sign up' : 'Sign in'}
+          </button>
+        </form>
+
+        {/* ── Divider ── */}
+        <div className="flex w-full items-center gap-3">
+          <div className="h-px flex-1 bg-[#e2e8f0]" />
+          <span className="text-sm text-[#64748b]">or</span>
+          <div className="h-px flex-1 bg-[#e2e8f0]" />
+        </div>
+
+        {/* ── Social buttons ── */}
+        <div className="flex w-full flex-col gap-4">
           <button
             type="button"
             onClick={handleGoogle}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-lg px-4 py-2.5 mb-4 text-sm font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded border border-[#cbd5e1] bg-[#ffffff] py-2 text-sm font-semibold text-[#374151] transition hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <svg width="18" height="18" viewBox="0 0 48 48">
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
               <path fill="#4285F4" d="M47.5 24.6c0-1.6-.1-3.1-.4-4.6H24v8.7h13.2c-.6 3-2.3 5.5-4.9 7.2v6h7.9c4.6-4.3 7.3-10.6 7.3-17.3z"/>
               <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.9-6c-2.2 1.5-5 2.3-8 2.3-6.1 0-11.3-4.1-13.2-9.7H2.7v6.2C6.7 42.9 14.8 48 24 48z"/>
               <path fill="#FBBC05" d="M10.8 28.8c-.5-1.5-.8-3-.8-4.8s.3-3.3.8-4.8v-6.2H2.7C1 16.4 0 20.1 0 24s1 7.6 2.7 10.9l8.1-6.1z"/>
               <path fill="#EA4335" d="M24 9.5c3.4 0 6.5 1.2 8.9 3.5l6.7-6.7C35.9 2.5 30.5 0 24 0 14.8 0 6.7 5.1 2.7 12.9l8.1 6.2c1.9-5.6 7.1-9.6 13.2-9.6z"/>
             </svg>
-            Continue with Google
+            {isSignUp ? 'Sign up with Google' : 'Sign in with Google'}
           </button>
 
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-xs text-gray-400">or</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {isSignUp && (
-              <div className="form-group">
-                <label htmlFor="displayName">Full Name</label>
-                <input
-                  id="displayName"
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Your full name"
-                  required
-                />
-              </div>
-            )}
-
-            <div className="form-group">
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <div className="flex items-center justify-between">
-                <label htmlFor="password">Password</label>
-                {!isSignUp && (
-                  <button
-                    type="button"
-                    onClick={() => { setIsForgot(true); setError(''); setResetSent(false); }}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    Forgot password?
-                  </button>
-                )}
-              </div>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={isSignUp ? 'At least 6 characters' : 'Your password'}
-                required
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded text-sm">
-                {error}
-              </div>
-            )}
-
-            <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-              {loading ? 'Please wait…' : isSignUp ? 'Create Account' : 'Sign In'}
-            </button>
-          </form>
-
-          <div className="text-center mt-4">
+          <p className="text-center text-sm text-[#475569]">
+            {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
             <button
               type="button"
               onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
-              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+              className="font-semibold text-[#0f172a] underline hover:text-[#475569] border-0 bg-transparent cursor-pointer outline-none"
             >
-              {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+              {isSignUp ? 'Sign in' : 'Sign up'}
             </button>
-          </div>
+          </p>
         </div>
-      </div>
+      </AuthCard>
+    </PageShell>
+  );
+}
+
+/* ── Shared layout primitives ────────────────────────────────────────────── */
+
+function PageShell({ children }) {
+  return (
+    <div
+      className="relative min-h-screen w-screen flex items-center justify-center p-4 sm:p-8"
+      style={{ background: 'radial-gradient(ellipse at 50% 50%, hsl(210,100%,97%), hsl(0,0%,100%))' }}
+    >
+      {children}
     </div>
+  );
+}
+
+function AuthCard({ children }) {
+  return (
+    <div className="flex w-full max-w-[450px] flex-col items-start gap-4 rounded-xl border border-[#e2e8f0] bg-[#ffffff] p-8 shadow-[hsla(220,30%,5%,0.05)_0px_5px_15px_0px,hsla(220,25%,10%,0.05)_0px_15px_35px_-5px]">
+      {children}
+    </div>
+  );
+}
+
+function BrandMark() {
+  return (
+    <div className="flex items-center gap-1.5 text-[#3a78c9]">
+      <span className="text-base leading-none" aria-hidden="true">🌳</span>
+      <span className="text-sm font-bold tracking-tight">Family Tree</span>
+    </div>
+  );
+}
+
+function BtnPrimary({ children, ...props }) {
+  return (
+    <button
+      type={props.type || 'button'}
+      {...props}
+      className="w-full rounded bg-[#0f172a] py-2 text-sm font-semibold text-white transition hover:bg-[#1e293b] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -270,7 +321,7 @@ function friendlyError(code, message) {
     case 'auth/invalid-api-key':
       return 'Firebase is not configured yet. Fill in VITE_FIREBASE_API_KEY in .env.local';
     case 'auth/operation-not-allowed':
-      return 'This sign-in method is not enabled. Enable Email/Password in Firebase Console → Authentication → Sign-in method.';
+      return 'This sign-in method is not enabled. Enable Email/Password in Firebase Console -> Authentication -> Sign-in method.';
     default:
       return `Error (${code || 'unknown'}): ${message || 'Please try again.'}`;
   }
