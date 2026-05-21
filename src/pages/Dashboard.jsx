@@ -5,6 +5,7 @@ import FamilyTreeApp from '../components/FamilyTreeApp';
 import {
   getUserFamilyTrees,
   createFamilyTree,
+  deleteFamilyTree,
   createInvite,
   getTreeInvites,
   subscribeToTreePresence,
@@ -158,6 +159,18 @@ export default function Dashboard() {
   async function handleLogout() {
     await logOut();
     navigate('/login');
+  }
+
+  async function handleDeleteTree() {
+    if (!activeTreeId || !user) return;
+    try {
+      await deleteFamilyTree(activeTreeId, user.uid);
+      const updated = trees.filter((t) => t.id !== activeTreeId);
+      setTrees(updated);
+      setActiveTreeId(updated.length > 0 ? updated[0].id : null);
+    } catch (err) {
+      console.error('Failed to delete tree', err);
+    }
   }
 
   async function handleCreateTree(e) {
@@ -337,12 +350,14 @@ export default function Dashboard() {
             <FamilyTreeApp
               key={activeTree.id}
               treeId={activeTree.id}
+              treeName={activeTree.name}
               initialPersons={activeTree.persons || []}
               initialLayout={activeLayout}
               uid={user?.uid}
               username={user?.displayName || user?.email}
               toolbarPortal={treeToolbarEl}
               onInvite={() => openInviteDialog(activeTree.id)}
+              onDeleteTree={handleDeleteTree}
             />
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>

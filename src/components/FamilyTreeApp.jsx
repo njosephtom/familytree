@@ -42,15 +42,44 @@ const SF = "'Nunito', 'Segoe UI', sans-serif";
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+const parseDateValue = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value !== "string") return null;
+
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d));
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getYearFromDateValue = (value) => {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) return Number(dateOnly[1]);
+  }
+  const parsed = parseDateValue(value);
+  return parsed ? parsed.getFullYear() : null;
+};
+
 const getAge = (dob) => {
   if (!dob) return null;
-  const b = new Date(dob), n = new Date();
+  const b = parseDateValue(dob);
+  if (!b) return null;
+  const n = new Date();
   let a = n.getFullYear() - b.getFullYear();
   if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
   return a;
 };
 const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
+  parseDateValue(d)
+    ? parseDateValue(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+    : "—";
 const cardColors = (sex) =>
   sex === "female"
     ? { fill: T.femaleFill, border: T.femaleBorder, text: T.femaleText }
@@ -363,16 +392,41 @@ function getIsolateSet(personId, persons) {
   const p = pm.get(personId);
   if (!p) return null;
   const vis = new Set([personId]);
-  (p.parents  || []).forEach((id) => pm.has(id) && vis.add(id));
-  if (p.spouse && pm.has(p.spouse)) vis.add(p.spouse);
-  (p.siblings || []).forEach((id) => pm.has(id) && vis.add(id));
-  (p.children || []).forEach((cid) => {
-    if (!pm.has(cid)) return;
-    vis.add(cid);
-    const c = pm.get(cid);
-    if (c.spouse && pm.has(c.spouse)) vis.add(c.spouse);
-    (c.children || []).forEach((gcid) => pm.has(gcid) && vis.add(gcid));
+
+  // Parents + grandparents
+  (p.parents || []).forEach((id) => {
+    if (!pm.has(id)) return;
+    vis.add(id);
+    // Grandparents (parent's parents)
+    (pm.get(id).parents || []).forEach((gid) => pm.has(gid) && vis.add(gid));
   });
+
+  // Spouse + in-laws (spouse's parents)
+  if (p.spouse && pm.has(p.spouse)) {
+    vis.add(p.spouse);
+    const spouse = pm.get(p.spouse);
+    (spouse.parents || []).forEach((id) => pm.has(id) && vis.add(id));
+  }
+
+  // Siblings
+  (p.siblings || []).forEach((id) => pm.has(id) && vis.add(id));
+
+  // All descendants recursively — children, grandchildren, etc. + each one's spouse
+  const addDescendants = (id) => {
+    const person = pm.get(id);
+    if (!person) return;
+    (person.children || []).forEach((cid) => {
+      if (!pm.has(cid) || vis.has(cid)) return;
+      vis.add(cid);
+      const child = pm.get(cid);
+      if (child.spouse && pm.has(child.spouse)) vis.add(child.spouse);
+      addDescendants(cid);
+    });
+  };
+  addDescendants(personId);
+  // Also walk descendants via the spouse (shared children already guarded by vis.has check)
+  if (p.spouse && pm.has(p.spouse)) addDescendants(p.spouse);
+
   return vis;
 }
 
@@ -516,7 +570,7 @@ function TreeLines({ persons, pos }) {
 /* ─────────────────────────────────────────
    PERSON CARD
 ───────────────────────────────────────── */
-function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDragStart, draggable: isDraggable, generation, dimmed }) {
+function PersonCard({ person, selected, onClick, onContextMenu, onHoverStart, onHoverEnd, onDragStart, draggable: isDraggable, generation, dimmed }) {
   const [hov, setHov] = useState(false);
   const c = cardColors(person.sex);
   const isActive = selected || hov;
@@ -533,6 +587,7 @@ function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDra
       data-card="true"
       onMouseDown={(e) => { if (onDragStart) onDragStart(e); }}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={(e) => { if (!dimmed) { setHov(true); onHoverStart?.(e); } }}
       onMouseLeave={() => { setHov(false); onHoverEnd?.(); }}
       style={{
@@ -577,7 +632,7 @@ function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDra
         </div>
         {person.dob && (
           <div style={{ color: c.text, fontSize: 10, opacity: 0.65, marginTop: 1 }}>
-            b. {new Date(person.dob).getFullYear()}
+            b. {getYearFromDateValue(person.dob)}
           </div>
         )}
         {person.job && (
@@ -593,7 +648,8 @@ function PersonCard({ person, selected, onClick, onHoverStart, onHoverEnd, onDra
 /* ─────────────────────────────────────────
    SETTINGS MODAL
 ───────────────────────────────────────── */
-function SettingsModal({ settings, onChange, onClose }) {
+function SettingsModal({ settings, onChange, onClose, onDeleteTree, treeName }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const TOOLTIP_FIELDS = [
     { key: "photo",       label: "Photo / Avatar" },
     { key: "firstName",   label: "First Name" },
@@ -629,6 +685,39 @@ function SettingsModal({ settings, onChange, onClose }) {
         <button onClick={onClose} style={{ width: "100%", background: T.accent, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
           Done
         </button>
+        {onDeleteTree && (
+          <div style={{ marginTop: 18, borderTop: `1px solid ${T.panelBorder}`, paddingTop: 16 }}>
+            <div style={{ color: T.red, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>⚠️ Danger Zone</div>
+            {!confirmDelete ? (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                style={{ width: "100%", background: "none", border: `1.5px solid ${T.red}`, color: T.red, borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                🗑 Delete This Family Tree
+              </button>
+            ) : (
+              <div style={{ background: "#fff1f1", border: `1px solid ${T.red}`, borderRadius: 8, padding: 14 }}>
+                <div style={{ color: T.text, fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                  Delete “{treeName || "this tree"}”? All members will be permanently removed and this cannot be undone.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    style={{ flex: 1, background: "none", border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={onDeleteTree}
+                    style={{ flex: 1, background: T.red, border: "none", color: "#fff", borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
+                  >
+                    Yes, Delete
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -669,7 +758,7 @@ function HoverTooltip({ person, x, y, fields }) {
       <div>
         {f.firstName && <div style={{ color: c.text, fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>{firstName}</div>}
         {f.familyName && person.familyName && <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 600 }}>{person.familyName}</div>}
-        {f.birthYear && person.dob && <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 600 }}>b. {new Date(person.dob).getFullYear()}</div>}
+        {f.birthYear && person.dob && <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 600 }}>b. {getYearFromDateValue(person.dob)}</div>}
         {f.job && person.job && <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 600 }}>{person.job}</div>}
         {f.deceased && person.dod && <div style={{ color: "#b91c1c", fontSize: 10, fontWeight: 700, marginTop: 3 }}>† Deceased</div>}
       </div>
@@ -685,6 +774,12 @@ function PersonPopup({ person, persons, onClose, onEdit, onDelete, onAddMember }
   const c = cardColors(person.sex);
   const age = getAge(person.dob);
   const spouse = person.spouse ? pm.get(person.spouse) : null;
+  const parentInLawIds = spouse?.parents || [];
+  const siblingInLawIds = Array.from(new Set([
+    ...(spouse?.siblings || []),
+    ...(person.siblings || []).map((id) => pm.get(id)?.spouse).filter(Boolean),
+  ])).filter((id) => id !== person.id);
+  const siblingInLaws = siblingInLawIds.map((id) => pm.get(id)).filter(Boolean);
   const [confirmDel, setConfirmDel] = useState(false);
 
   const initials = person.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -712,7 +807,7 @@ function PersonPopup({ person, persons, onClose, onEdit, onDelete, onAddMember }
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: mc.text, fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
           <div style={{ color: mc.text, fontSize: 10, opacity: 0.65, textTransform: "capitalize" }}>
-            {role}{p.dob ? ` · b.${new Date(p.dob).getFullYear()}` : ""}
+            {role}{p.dob ? ` · b.${getYearFromDateValue(p.dob)}` : ""}
           </div>
         </div>
       </div>
@@ -823,20 +918,20 @@ function PersonPopup({ person, persons, onClose, onEdit, onDelete, onAddMember }
             <FamilySection label="Parents"  icon="👶" ids={person.parents}  role="Parent"  />
             <FamilySection label="Siblings" icon="🤝" ids={person.siblings} role="Sibling" />
             <FamilySection label="Children" icon="⭐" ids={person.children} role="Child"   />
-            {/* In-Laws (derived from spouse's family) */}
-            {spouse && ((spouse.parents || []).some((id) => pm.has(id)) || (spouse.siblings || []).some((id) => pm.has(id))) && (
+            {/* In-Laws (derived from spouse's family and siblings' spouses) */}
+            {(parentInLawIds.some((id) => pm.has(id)) || siblingInLaws.length > 0) && (
               <div style={{ marginTop: 8 }}>
                 <div style={{ color: T.text, fontSize: 13, fontWeight: 800, marginBottom: 12, paddingBottom: 6, borderBottom: `1.5px solid ${T.panelBorder}` }}>🤝 In-Laws</div>
-                {(spouse.parents || []).some((id) => pm.has(id)) && (
+                {parentInLawIds.some((id) => pm.has(id)) && (
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>👨‍👩‍👦 Parents-in-Law</div>
-                    {(spouse.parents || []).map((id) => { const inlaw = pm.get(id); return inlaw ? <Mini key={id} p={inlaw} role="Parent-in-Law" /> : null; })}
+                    {parentInLawIds.map((id) => { const inlaw = pm.get(id); return inlaw ? <Mini key={id} p={inlaw} role="Parent-in-Law" /> : null; })}
                   </div>
                 )}
-                {(spouse.siblings || []).some((id) => pm.has(id)) && (
+                {siblingInLaws.length > 0 && (
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>🤝 Siblings-in-Law</div>
-                    {(spouse.siblings || []).map((id) => { const inlaw = pm.get(id); return inlaw ? <Mini key={id} p={inlaw} role="Sibling-in-Law" /> : null; })}
+                    {siblingInLaws.map((inlaw) => <Mini key={inlaw.id} p={inlaw} role="Sibling-in-Law" />)}
                   </div>
                 )}
               </div>
@@ -1049,7 +1144,7 @@ function FormModal({ initial, persons, onSave, onClose }) {
                     return (
                       <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, background: on ? rc.fill : T.bg, border: `1px solid ${on ? rc.border : T.panelBorder}`, borderRadius: 7, padding: "7px 10px", transition: "all 0.12s" }}>
                         <span style={{ color: T.text, fontSize: 12, fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-                        {r.dob && <span style={{ color: T.textMuted, fontSize: 10 }}>{new Date(r.dob).getFullYear()}</span>}
+                        {r.dob && <span style={{ color: T.textMuted, fontSize: 10 }}>{getYearFromDateValue(r.dob)}</span>}
                         <button onClick={() => toggleRel(relType, r.id)} style={{ background: on ? rc.border : T.accent, border: "none", color: "#fff", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontWeight: 700 }}>
                           {on ? "✓" : "+ Link"}
                         </button>
@@ -1160,7 +1255,7 @@ function QuickAddModal({ targetPerson, defaultRelType, persons, onSave, onClose 
 /* ─────────────────────────────────────────
    MAIN APP
 ───────────────────────────────────────── */
-export default function FamilyTreeApp({ username, onLogout, treeId, initialPersons, uid, initialLayout, toolbarPortal, onInvite }) {
+export default function FamilyTreeApp({ username, onLogout, treeId, treeName, initialPersons, uid, initialLayout, toolbarPortal, onInvite, onDeleteTree }) {
   const [persons, setPersons] = useState(() => loadPersons(treeId, initialPersons));
   const [pos, setPos]         = useState(() => initialLayout?.pos ?? {});
   const [selected, setSelected] = useState(null);
@@ -1178,9 +1273,16 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
   const [zoom, setZoom]         = useState(() => initialLayout?.zoom ?? 0.85);
   const [dragging, setDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState(null);
+  const [canvasMode, setCanvasMode] = useState('pan'); // 'pan' | 'select'
+  const [selBox, setSelBox]     = useState(null);       // { x1,y1,x2,y2 } screen coords while dragging
+  const [multiSelected, setMultiSelected] = useState(new Set()); // ids from box-select
+  const [importData, setImportData] = useState(null);   // { persons, layout } — pending import confirmation
+  const [contextMenu, setContextMenu] = useState(null); // { personId, x, y }
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const canvasRef        = useRef();
   // Skip auto-centering if we restored a saved viewport position
-  const centered         = useRef(!!initialLayout?.pan);
+  const centered              = useRef(!!initialLayout?.pan);
+  const personsInitialized    = useRef(false); // skip Firestore save on first mount
   const importFileRef    = useRef();
   const clickTimerRef    = useRef(null);
   const cardDragRef      = useRef(null);  // { id, origX, origY, startMouseX, startMouseY, dragged }
@@ -1212,10 +1314,25 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
   }, [pos, zoom]);
 
   // Persist persons to localStorage and Firestore (shared tree data)
+  // Skip saving on initial mount — data was just loaded from Firestore
   useEffect(() => {
     savePersons(persons, treeId);
     if (treeId) {
-      saveFamilyTreePersons(treeId, persons).catch(() => {});
+      if (!personsInitialized.current) {
+        personsInitialized.current = true;
+        return;
+      }
+      setSaveStatus('saving');
+      saveFamilyTreePersons(treeId, persons)
+        .then(() => {
+          setSaveStatus('saved');
+          setTimeout(() => setSaveStatus('idle'), 2500);
+        })
+        .catch((err) => {
+          console.error('Firestore save failed:', err);
+          setSaveStatus('error');
+          setTimeout(() => setSaveStatus('idle'), 4000);
+        });
     }
   }, [persons, treeId]);
   useEffect(() => { saveSettings(settings); }, [settings]);
@@ -1231,35 +1348,76 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
     return () => { if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current); };
   }, [pos, pan, zoom, uid, treeId]);
 
-  // Canvas pan
+  // Canvas pan / box-select
   const onMouseDown = useCallback((e) => {
-    cardWasDraggedRef.current = false; // reset drag-suppress flag on every new press
+    cardWasDraggedRef.current = false;
     if (e.button !== 0 || e.target.closest("[data-card]")) return;
-    setDragging(true);
-    setLastMouse({ x: e.clientX, y: e.clientY });
+    setContextMenu(null);
     setPopup(null);
     setTooltip(null);
-  }, []);
+    if (canvasMode === 'select') {
+      setMultiSelected(new Set());
+      setSelBox({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY });
+    } else {
+      setDragging(true);
+      setLastMouse({ x: e.clientX, y: e.clientY });
+    }
+  }, [canvasMode]);
   const onMouseMove = useCallback((e) => {
-    // Card dragging (free-move mode)
+    // Card dragging (free-move mode or multi-select drag)
     if (cardDragRef.current) {
-      const { id, origX, origY, startMouseX, startMouseY } = cardDragRef.current;
+      const { id, origX, origY, startMouseX, startMouseY, isMulti, origPositions } = cardDragRef.current;
       const delta = Math.hypot(e.clientX - startMouseX, e.clientY - startMouseY);
       if (delta >= 4) {
         cardDragRef.current.dragged = true;
         cardWasDraggedRef.current = true;
         const dx = (e.clientX - startMouseX) / zoom;
         const dy = (e.clientY - startMouseY) / zoom;
-        setPos((prev) => ({ ...prev, [id]: { x: origX + dx, y: origY + dy } }));
+        if (isMulti && origPositions) {
+          setPos((prev) => {
+            const next = { ...prev };
+            Object.entries(origPositions).forEach(([mid, { x, y }]) => { next[mid] = { x: x + dx, y: y + dy }; });
+            return next;
+          });
+        } else {
+          setPos((prev) => ({ ...prev, [id]: { x: origX + dx, y: origY + dy } }));
+        }
       }
+      return;
+    }
+    // Box-select stretch
+    if (selBox) {
+      setSelBox((prev) => prev ? { ...prev, x2: e.clientX, y2: e.clientY } : null);
       return;
     }
     // Canvas panning
     if (!dragging || !lastMouse) return;
     setPan((p) => ({ x: p.x + e.clientX - lastMouse.x, y: p.y + e.clientY - lastMouse.y }));
     setLastMouse({ x: e.clientX, y: e.clientY });
-  }, [dragging, lastMouse, zoom]);
-  const onMouseUp = useCallback(() => { cardDragRef.current = null; setDragging(false); setLastMouse(null); }, []);
+  }, [dragging, lastMouse, zoom, selBox]);
+  const onMouseUp = useCallback(() => {
+    cardDragRef.current = null;
+    setDragging(false);
+    setLastMouse(null);
+    if (selBox) {
+      const el = canvasRef.current;
+      if (el && (Math.abs(selBox.x2 - selBox.x1) > 6 || Math.abs(selBox.y2 - selBox.y1) > 6)) {
+        const rect = el.getBoundingClientRect();
+        const ox = pan.x + window.innerWidth / 2;
+        const oy = pan.y + (window.innerHeight - 56) / 2;
+        const wx1 = (Math.min(selBox.x1, selBox.x2) - rect.left - ox) / zoom;
+        const wy1 = (Math.min(selBox.y1, selBox.y2) - rect.top  - oy) / zoom;
+        const wx2 = (Math.max(selBox.x1, selBox.x2) - rect.left - ox) / zoom;
+        const wy2 = (Math.max(selBox.y1, selBox.y2) - rect.top  - oy) / zoom;
+        setMultiSelected(new Set(
+          persons
+            .filter((p) => { const pp = pos[p.id]; return pp && pp.x < wx2 && pp.x + CW > wx1 && pp.y < wy2 && pp.y + CH > wy1; })
+            .map((p) => p.id)
+        ));
+      }
+      setSelBox(null);
+    }
+  }, [selBox, pan, zoom, persons, pos]);
 
   const genMap     = useMemo(() => computeGenMap(persons), [persons]);
   const isolateSet = useMemo(() => getIsolateSet(isolateId, persons), [isolateId, persons]);
@@ -1275,6 +1433,23 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // Close context menu on Escape key
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") setContextMenu(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Close context menu when clicking outside it
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = (e) => {
+      if (!e.target.closest("[data-context-menu]")) setContextMenu(null);
+    };
+    document.addEventListener("mousedown", close, true);
+    return () => document.removeEventListener("mousedown", close, true);
+  }, [contextMenu]);
 
   const savePerson = (data) => {
     setPersons((prev) => {
@@ -1503,11 +1678,7 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
         if (Array.isArray(imported) && imported.length > 0) {
           const normalizedImported = imported.map((person, index) => normalizeImportedPerson(person, index));
           const normalizedLayout = normalizeImportedLayout(importedLayout, normalizedImported);
-          if (window.confirm(`Import ${imported.length} people? This will replace the current tree.`)) {
-            setPersons(normalizedImported);
-            setPos(normalizedLayout);
-            centered.current = false;
-          }
+          setImportData({ persons: normalizedImported, layout: normalizedLayout });
         } else {
           alert("No valid data found in file.");
         }
@@ -1518,6 +1689,13 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
     reader.readAsText(file);
     e.target.value = "";
   };
+
+  const applyImport = useCallback((data) => {
+    setPersons(data.persons);
+    setPos(data.layout);
+    centered.current = false;
+    setImportData(null);
+  }, []);
 
   const pm         = new Map(persons.map((p) => [p.id, p]));
   const selPerson  = popup ? pm.get(popup) : null;
@@ -1550,9 +1728,10 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
           onMouseLeave={onMouseUp}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
           style={{
             position: "absolute", inset: 0,
-            cursor: dragging ? "grabbing" : "grab",
+            cursor: canvasMode === 'select' ? 'crosshair' : (dragging ? "grabbing" : "grab"),
             background: T.canvas,
             backgroundImage: `radial-gradient(circle, ${T.line}44 1px, transparent 1px)`,
             backgroundSize: "30px 30px",
@@ -1569,14 +1748,23 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
                     <div data-card="true">
                       <PersonCard
                         person={p}
-                        selected={selected === p.id}
-                        draggable={dragMode}
+                        selected={selected === p.id || multiSelected.has(p.id)}
+                        draggable={dragMode || multiSelected.has(p.id)}
                         generation={genMap.get(p.id)}
                         dimmed={isolateSet ? !isolateSet.has(p.id) : false}
-                        onDragStart={dragMode ? (e) => {
+                        onDragStart={(dragMode || multiSelected.has(p.id)) ? (e) => {
                           cardWasDraggedRef.current = false;
                           const pp2 = pos[p.id];
-                          if (pp2) cardDragRef.current = { id: p.id, origX: pp2.x, origY: pp2.y, startMouseX: e.clientX, startMouseY: e.clientY, dragged: false };
+                          if (!pp2) return;
+                          const inSelection = multiSelected.has(p.id) && multiSelected.size > 1;
+                          cardDragRef.current = {
+                            id: p.id, origX: pp2.x, origY: pp2.y,
+                            startMouseX: e.clientX, startMouseY: e.clientY, dragged: false,
+                            isMulti: inSelection,
+                            origPositions: inSelection
+                              ? Object.fromEntries([...multiSelected].map((mid) => [mid, pos[mid]]).filter(([, v]) => v))
+                              : null,
+                          };
                         } : undefined}
                         onClick={(e) => {
                           if (cardWasDraggedRef.current) { cardWasDraggedRef.current = false; return; }
@@ -1598,6 +1786,12 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
                             };
                           }
                         }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setContextMenu({ personId: p.id, x: e.clientX, y: e.clientY });
+                          setTooltip(null);
+                        }}
                         onHoverStart={(e) => {
                           if (!popup && !editing && !adding && !quickAdd)
                             setTooltip({ person: p, x: e.clientX, y: e.clientY });
@@ -1617,6 +1811,24 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
               <div style={{ color: T.textSub, fontSize: 18, fontWeight: 800, marginBottom: 6 }}>Start Your Family Tree</div>
               <div style={{ color: T.textMuted, fontSize: 13 }}>Click "Add Member" to begin</div>
             </div>
+          )}
+
+          {/* Box-select rectangle overlay */}
+          {selBox && (
+            <div
+              style={{
+                position: "fixed",
+                left: Math.min(selBox.x1, selBox.x2),
+                top:  Math.min(selBox.y1, selBox.y2),
+                width:  Math.abs(selBox.x2 - selBox.x1),
+                height: Math.abs(selBox.y2 - selBox.y1),
+                border: `1.5px dashed ${T.accent}`,
+                background: `${T.accent}1a`,
+                borderRadius: 3,
+                pointerEvents: "none",
+                zIndex: 500,
+              }}
+            />
           )}
         </div>
 
@@ -1670,7 +1882,123 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
         />
       )}
       {tooltip && <HoverTooltip person={tooltip.person} x={tooltip.x} y={tooltip.y} fields={settings.tooltipFields} />}
-      {showSettings && <SettingsModal settings={settings} onChange={setSettings} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal
+        settings={settings}
+        onChange={setSettings}
+        onClose={() => setShowSettings(false)}
+        treeName={treeName}
+        onDeleteTree={onDeleteTree ? () => { setShowSettings(false); onDeleteTree(); } : undefined}
+      />}
+
+      {/* ── Right-click context menu ── */}
+      {contextMenu && (() => {
+        const ctxPerson = pm.get(contextMenu.personId);
+        if (!ctxPerson) return null;
+        const isIsolated = isolateId === contextMenu.personId;
+        const ctxId = contextMenu.personId;
+        return (
+          <div
+            data-context-menu="true"
+            style={{
+              position: "fixed",
+              left: Math.min(contextMenu.x, window.innerWidth - 200),
+              top: Math.min(contextMenu.y, window.innerHeight - 260),
+              background: T.white,
+              border: `1px solid ${T.panelBorder}`,
+              borderRadius: 10,
+              boxShadow: "0 8px 28px rgba(0,0,0,0.16)",
+              zIndex: 1200,
+              minWidth: 188,
+              fontFamily: SF,
+              overflow: "hidden",
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "8px 14px 7px", borderBottom: `1px solid ${T.panelBorder}`, color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {ctxPerson.name}
+            </div>
+            <button
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: isIsolated ? T.accent : T.text, fontFamily: SF }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+              onClick={() => { setContextMenu(null); setIsolateId(isIsolated ? null : ctxId); }}
+            >
+              👁 {isIsolated ? "Exit Isolate View" : "Isolate View"}
+            </button>
+            <div style={{ height: 1, background: T.panelBorder }} />
+            {[
+              ["parent",  "👤 Add Parent"],
+              ["spouse",  "💑 Add Spouse"],
+              ["child",   "👶 Add Child"],
+              ["sibling", "👥 Add Sibling"],
+            ].map(([relType, label]) => (
+              <button
+                key={relType}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.text, fontFamily: SF }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                onClick={() => { setContextMenu(null); setPopup(null); setQuickAdd({ targetId: ctxId, relType }); }}
+              >
+                {label}
+              </button>
+            ))}
+            <div style={{ height: 1, background: T.panelBorder }} />
+            <button
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.text, fontFamily: SF }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+              onClick={() => {
+                setContextMenu(null);
+                if (treeId) {
+                  setSaveStatus('saving');
+                  saveFamilyTreePersons(treeId, persons)
+                    .then(() => { setSaveStatus('saved'); setTimeout(() => setSaveStatus('idle'), 2500); })
+                    .catch(() => setSaveStatus('idle'));
+                }
+              }}
+            >
+              💾 Save to Database
+            </button>
+            <div style={{ height: 1, background: T.panelBorder }} />
+            <button
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.text, fontFamily: SF }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+              onClick={() => { setContextMenu(null); setEditing(ctxId); setPopup(null); }}
+            >
+              ✏️ Edit
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* ── Import confirmation modal ── */}
+      {importData && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(20,40,70,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000, fontFamily: SF }}>
+          <div style={{ background: T.white, borderRadius: 16, padding: 28, width: 380, maxWidth: "calc(100vw - 32px)", boxShadow: "0 24px 64px rgba(0,0,0,0.18)", border: `1px solid ${T.panelBorder}` }}>
+            <div style={{ fontSize: 28, marginBottom: 10 }}>⬇️</div>
+            <h3 style={{ margin: "0 0 10px", color: T.text, fontSize: 18, fontWeight: 800, fontFamily: SF }}>Import Family Tree?</h3>
+            <p style={{ margin: "0 0 22px", color: T.textSub, fontSize: 14, lineHeight: 1.55 }}>
+              This will replace the current tree with{" "}
+              <strong style={{ color: T.text }}>{importData.persons.length} people</strong>. This action cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setImportData(null)}
+                style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: SF }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => applyImport(importData)}
+                style={{ background: T.accent, border: "none", color: "#fff", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: SF }}
+              >
+                Import {importData.persons.length} people
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Toolbar portal into Dashboard's nav bar ── */}
       {toolbarPortal && createPortal(
@@ -1744,6 +2072,31 @@ export default function FamilyTreeApp({ username, onLogout, treeId, initialPerso
               title={isolateId ? 'Exit isolate view' : selected ? `Isolate: ${pm.get(selected)?.name}` : 'Select a person first'}
               style={{ background: isolateId ? T.accent : T.bg, border: `1px solid ${isolateId ? T.accent : T.panelBorder}`, color: isolateId ? '#fff' : (!selected ? T.textMuted : T.textSub), borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: (selected || isolateId) ? 'pointer' : 'not-allowed', fontWeight: 700, opacity: (!selected && !isolateId) ? 0.45 : 1 }}>
               {isolateId ? '👁 Isolated' : '👁 Isolate'}
+            </button>
+            <button
+              onClick={() => { setCanvasMode((m) => { const next = m === 'pan' ? 'select' : 'pan'; if (next === 'pan') setMultiSelected(new Set()); return next; }); }}
+              title={canvasMode === 'pan' ? 'Switch to box-select mode (drag to select multiple)' : 'Switch back to pan mode'}
+              style={{ background: canvasMode === 'select' ? T.accent : T.bg, border: `1px solid ${canvasMode === 'select' ? T.accent : T.panelBorder}`, color: canvasMode === 'select' ? '#fff' : T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
+              {canvasMode === 'select' ? '⬚ Select' : '✋ Pan'}
+            </button>
+            {saveStatus !== 'idle' && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: saveStatus === 'saved' ? '#22c55e' : saveStatus === 'error' ? '#ef4444' : T.textMuted, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', transition: 'color 0.3s' }}>
+                {saveStatus === 'saving' ? '⏳ Saving…' : saveStatus === 'error' ? '✗ Save failed' : '✓ Saved'}
+              </span>
+            )}
+            <button
+              onClick={() => {
+                if (treeId) {
+                  setSaveStatus('saving');
+                  saveFamilyTreePersons(treeId, persons)
+                    .then(() => { setSaveStatus('saved'); setTimeout(() => setSaveStatus('idle'), 2500); })
+                    .catch((err) => { console.error('Manual save failed:', err); setSaveStatus('error'); setTimeout(() => setSaveStatus('idle'), 4000); });
+                }
+              }}
+              title="Save to database"
+              style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}
+            >
+              💾 Save
             </button>
             <div style={{ width: 1, height: 20, background: T.panelBorder }} />
             <button onClick={() => exportData('json')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬆ Export</button>
