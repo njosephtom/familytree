@@ -207,3 +207,16 @@ export async function getUserTreeLayout(uid, treeId) {
   if (!snap.exists()) return null;
   return snap.data()?.treeLayouts?.[treeId] ?? null;
 }
+
+// ── Admin utilities ───────────────────────────────────────────────────────────
+// Only callable from the admin@familytree.com account.
+
+export async function getAllFamilyTrees() {
+  const snap = await getDocs(collection(db, 'familyTrees'));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function getAllUsers() {
+  const snap = await getDocs(collection(db, 'users'));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}

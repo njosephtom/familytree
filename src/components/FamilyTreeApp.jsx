@@ -207,19 +207,25 @@ function computeLayout(persons) {
     });
   });
 
-  // BFS generation assignment (spouses same gen, children +1)
-  const genMap = new Map();
-  const queue  = [];
-  const inQ    = new Set();
+  // BFS / relaxation generation assignment (spouses same gen, children +1)
+  // Safety cap: each node can be relaxed at most N times (handles cycles gracefully)
+  const genMap   = new Map();
+  const queue    = [];
+  const inQ      = new Set();
+  const relaxed  = new Map(); // relaxation count per node
   persons.forEach((p) => {
     if (parentSet.get(p.id).size === 0) {
       genMap.set(p.id, 0); queue.push(p.id); inQ.add(p.id);
     }
   });
   if (!queue.length) { genMap.set(persons[0].id, 0); queue.push(persons[0].id); inQ.add(persons[0].id); }
+  const MAX_RELAX = persons.length; // Bellman-Ford bound — enough for any acyclic graph
 
   while (queue.length) {
     const id = queue.shift(); inQ.delete(id);
+    const visits = (relaxed.get(id) ?? 0) + 1;
+    relaxed.set(id, visits);
+    if (visits > MAX_RELAX) continue; // cycle detected — stop relaxing this node
     const g  = genMap.get(id);
     const p  = pm.get(id);
     [p?.spouse, ...(p?.exSpouses || [])].forEach((sid) => {
@@ -361,14 +367,22 @@ function computeGenMap(persons) {
     if (!(p.parents || []).some((pid) => pm.has(pid))) gen.set(p.id, 0);
   });
   if (!gen.size) gen.set(persons[0].id, 0);
+  // Relaxation-count guard: each node updated at most N times (cycle-safe Bellman-Ford)
+  const relaxCount = new Map();
+  const MAX_R = persons.length;
   let dirty = true;
   while (dirty) {
     dirty = false;
     persons.forEach((p) => {
+      if ((relaxCount.get(p.id) ?? 0) >= MAX_R) return;
       const pg = (p.parents || []).map((pid) => gen.get(pid)).filter((v) => v != null);
       if (!pg.length) return;
       const next = Math.max(...pg) + 1;
-      if ((gen.get(p.id) ?? -1) < next) { gen.set(p.id, next); dirty = true; }
+      if ((gen.get(p.id) ?? -1) < next) {
+        gen.set(p.id, next);
+        relaxCount.set(p.id, (relaxCount.get(p.id) ?? 0) + 1);
+        dirty = true;
+      }
     });
   }
   dirty = true;
@@ -479,20 +493,19 @@ function TreeLines({ persons, pos }) {
         <circle cx={dotX} cy={dotY} r={DOT_R + 3} fill={T.dotRing} opacity={0.6} />
         <circle cx={dotX} cy={dotY} r={DOT_R} fill={T.dot} />
         {allChildren.length > 0 && childPositions.length > 0 && (() => {
-          const sibY = dotY + DROP;
-          const cxArr = allChildren.map((c) => pos[c]).filter(Boolean).map((cp) => cp.x + CW / 2);
-          const minCX = Math.min(...cxArr);
-          const maxCX = Math.max(...cxArr);
-          const barLeft = Math.min(minCX, dotX);
-          const barRight = Math.max(maxCX, dotX);
+          const junctionY = dotY + DROP;
+          const cxArr = childPositions.map((cp) => cp.x + CW / 2);
+          const barLeft  = Math.min(...cxArr, dotX);
+          const barRight = Math.max(...cxArr, dotX);
           return (
             <g>
-              <line x1={dotX} y1={dotY + DOT_R} x2={dotX} y2={sibY} stroke={T.line} strokeWidth={1.5} />
-              <line x1={barLeft} y1={sibY} x2={barRight} y2={sibY} stroke={T.line} strokeWidth={1.5} />
+              <line x1={dotX} y1={dotY + DOT_R} x2={dotX} y2={junctionY} stroke={T.line} strokeWidth={1.5} />
+              <line x1={barLeft} y1={junctionY} x2={barRight} y2={junctionY} stroke={T.line} strokeWidth={1.5} />
               {allChildren.map((cid) => {
                 const cp = pos[cid];
                 if (!cp) return null;
-                return <line key={`ch~${cid}`} x1={cp.x + CW / 2} y1={sibY} x2={cp.x + CW / 2} y2={cp.y} stroke={T.line} strokeWidth={1.5} />;
+                const cx = cp.x + CW / 2;
+                return <line key={`ch~${cid}`} x1={cx} y1={junctionY} x2={cx} y2={cp.y} stroke={T.line} strokeWidth={1.5} />;
               })}
             </g>
           );
@@ -529,22 +542,21 @@ function TreeLines({ persons, pos }) {
     if (soloChildren.length > 0 && !p.spouse) {
       const px = pp.x + CW / 2;
       const py = pp.y + CH;
-      const sibY = py + DROP;
+      const junctionY = py + DROP;
       const cxArr = soloChildren.map((c) => pos[c]).filter(Boolean).map((cp) => cp.x + CW / 2);
       if (cxArr.length > 0) {
-        const minCX = Math.min(...cxArr);
-        const maxCX = Math.max(...cxArr);
-        const barLeft = Math.min(minCX, px);
-        const barRight = Math.max(maxCX, px);
+        const barLeft  = Math.min(...cxArr, px);
+        const barRight = Math.max(...cxArr, px);
         els.push(
           <g key={`solo~${p.id}`}>
-            <line x1={px} y1={py} x2={px} y2={sibY} stroke={T.line} strokeWidth={1.5} />
-            <line x1={barLeft} y1={sibY} x2={barRight} y2={sibY} stroke={T.line} strokeWidth={1.5} />
+            <line x1={px} y1={py} x2={px} y2={junctionY} stroke={T.line} strokeWidth={1.5} />
+            <line x1={barLeft} y1={junctionY} x2={barRight} y2={junctionY} stroke={T.line} strokeWidth={1.5} />
             {soloChildren.map((cid) => {
               const cp = pos[cid];
               if (!cp) return null;
+              const cx = cp.x + CW / 2;
               return (
-                <line key={`sc~${cid}`} x1={cp.x + CW / 2} y1={sibY} x2={cp.x + CW / 2} y2={cp.y} stroke={T.line} strokeWidth={1.5} />
+                <line key={`sc~${cid}`} x1={cx} y1={junctionY} x2={cx} y2={cp.y} stroke={T.line} strokeWidth={1.5} />
               );
             })}
           </g>
@@ -1941,6 +1953,14 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
             >
               👁 {isIsolated ? "Exit Isolate View" : "Isolate View"}
             </button>
+            <button
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: dragMode ? T.accent : T.text, fontFamily: SF }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+              onClick={() => { setContextMenu(null); setDragMode((d) => !d); }}
+            >
+              ⬡ {dragMode ? 'Drag On' : 'Drag Off'}
+            </button>
             <div style={{ height: 1, background: T.panelBorder }} />
             {[
               ["parent",  "👤 Add Parent"],
@@ -2066,42 +2086,24 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
               </button>
             )}
             <div style={{ width: 1, height: 20, background: T.panelBorder }} />
-            {[['−', 0.87, 'zoom-out'], ['+', 1.15, 'zoom-in']].map(([l, f, tid]) => (
-              <button key={l} data-testid={tid}
-                onClick={() => {
-                  // Read zoom directly from closure (current render value) — do NOT nest
-                  // setPan inside setZoom updater; StrictMode calls updaters twice
-                  const newZ = Math.min(2.5, Math.max(0.2, zoom * f));
-                  setZoom(newZ);
-                  setPan((p) => ({ x: p.x * newZ / zoom, y: p.y * newZ / zoom }));
-                }}
-                style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 7, width: 28, height: 28, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                {l}
-              </button>
-            ))}
-            <button onClick={resetView} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Reset</button>
+            {/* Drag mode */}
             <button
               onClick={() => setDragMode((d) => !d)}
-              style={{ background: dragMode ? T.accent : T.bg, border: `1px solid ${dragMode ? T.accent : T.panelBorder}`, color: dragMode ? '#fff' : T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
-              {dragMode ? '⧏ Dragging' : '⧏ Drag'}
+              style={{ background: dragMode ? T.accent : T.bg, border: `1px solid ${dragMode ? T.accent : T.panelBorder}`, color: dragMode ? '#fff' : T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
+            >
+              {dragMode ? '⬡ Dragging' : '⬡ Drag'}
             </button>
-            {dragMode && (
-              <button onClick={() => { setPos(computeLayout(persons)); centered.current = false; }}
-                style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>↺ Align</button>
-            )}
+            {/* Isolate */}
             <button
               onClick={() => { if (isolateId) setIsolateId(null); else if (selected) setIsolateId(selected); }}
               disabled={!selected && !isolateId}
               title={isolateId ? 'Exit isolate view' : selected ? `Isolate: ${pm.get(selected)?.name}` : 'Select a person first'}
-              style={{ background: isolateId ? T.accent : T.bg, border: `1px solid ${isolateId ? T.accent : T.panelBorder}`, color: isolateId ? '#fff' : (!selected ? T.textMuted : T.textSub), borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: (selected || isolateId) ? 'pointer' : 'not-allowed', fontWeight: 700, opacity: (!selected && !isolateId) ? 0.45 : 1 }}>
+              style={{ background: isolateId ? T.accent : T.bg, border: `1px solid ${isolateId ? T.accent : T.panelBorder}`, color: isolateId ? '#fff' : (!selected ? T.textMuted : T.textSub), borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: (selected || isolateId) ? 'pointer' : 'not-allowed', fontWeight: 700, opacity: (!selected && !isolateId) ? 0.45 : 1 }}
+            >
               {isolateId ? '👁 Isolated' : '👁 Isolate'}
             </button>
-            <button
-              onClick={() => { setCanvasMode((m) => { const next = m === 'pan' ? 'select' : 'pan'; if (next === 'pan') setMultiSelected(new Set()); return next; }); }}
-              title={canvasMode === 'pan' ? 'Switch to box-select mode (drag to select multiple)' : 'Switch back to pan mode'}
-              style={{ background: canvasMode === 'select' ? T.accent : T.bg, border: `1px solid ${canvasMode === 'select' ? T.accent : T.panelBorder}`, color: canvasMode === 'select' ? '#fff' : T.textSub, borderRadius: 7, padding: '0 10px', height: 28, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
-              {canvasMode === 'select' ? '⬚ Select' : '✋ Pan'}
-            </button>
+            <div style={{ width: 1, height: 20, background: T.panelBorder }} />
+            {/* Save */}
             {saveStatus !== 'idle' && (
               <span style={{ fontSize: 11, fontWeight: 700, color: saveStatus === 'saved' ? '#22c55e' : saveStatus === 'error' ? '#ef4444' : T.textMuted, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', transition: 'color 0.3s' }}>
                 {saveStatus === 'saving' ? '⏳ Saving…' : saveStatus === 'error' ? '✗ Save failed' : '✓ Saved'}
@@ -2122,11 +2124,22 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
               💾 Save
             </button>
             <div style={{ width: 1, height: 20, background: T.panelBorder }} />
-            <button onClick={() => exportData('json')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬆ Export</button>
-            <button onClick={() => exportData('xml')} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>XML</button>
-            <button onClick={() => importFileRef.current.click()} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>⬇ Import</button>
-            <input ref={importFileRef} type="file" accept=".json,.xml" style={{ display: 'none' }} onChange={handleImport} />
-            <button onClick={() => setShowSettings(true)} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 10px', fontSize: 14, cursor: 'pointer', fontWeight: 700 }}>⚙️</button>
+            {/* Export / Import XML */}
+            <button
+              onClick={() => exportData('xml')}
+              title="Export tree as XML file"
+              style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}
+            >
+              ⬆ Export XML
+            </button>
+            <button
+              onClick={() => importFileRef.current.click()}
+              title="Import tree from XML file"
+              style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}
+            >
+              ⬇ Import XML
+            </button>
+            <input ref={importFileRef} type="file" accept=".xml" style={{ display: 'none' }} onChange={handleImport} />
             <button onClick={() => setAdding(true)} style={{ background: T.accent, border: 'none', color: '#fff', borderRadius: 8, padding: '5px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 800 }}>＋ Add Member</button>
           </div>
         </>,

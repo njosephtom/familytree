@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 const FamilyTreeApp = lazy(() => import('../components/FamilyTreeApp'));
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -324,6 +324,16 @@ export default function Dashboard() {
                   <div style={{ color: T.text, fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.displayName || 'User'}</div>
                   <div style={{ color: T.textMuted, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>
                 </div>
+                {user?.email === 'admin@familytree.com' && (
+                  <Link
+                    to="/admin"
+                    style={{ display: 'block', width: '100%', padding: '10px 14px', background: 'none', color: T.accent, fontSize: 13, fontWeight: 700, textDecoration: 'none', fontFamily: SF }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                  >
+                    🛡 Admin Panel
+                  </Link>
+                )}
                 <button
                   onClick={handleLogout}
                   style={{ width: '100%', padding: '10px 14px', background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 13, fontWeight: 700, textAlign: 'left', fontFamily: SF }}
