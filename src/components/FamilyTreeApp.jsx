@@ -1280,8 +1280,12 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
   const [contextMenu, setContextMenu] = useState(null); // { personId, x, y }
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const canvasRef        = useRef();
-  // Skip auto-centering if we restored a saved viewport position
-  const centered              = useRef(!!initialLayout?.pan);
+  // Skip auto-centering only if saved layout covers ALL current persons.
+  // If persons were added/removed since last save, always re-center so nothing is off-screen.
+  const savedPosIds = initialLayout?.pos ? Object.keys(initialLayout.pos) : [];
+  const allPersonsCovered = initialPersons?.length > 0 &&
+    initialPersons.every((p) => savedPosIds.includes(p.id));
+  const centered              = useRef(allPersonsCovered && !!initialLayout?.pan);
   const personsInitialized    = useRef(false); // skip Firestore save on first mount
   const importFileRef    = useRef();
   const clickTimerRef    = useRef(null);
