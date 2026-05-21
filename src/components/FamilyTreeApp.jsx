@@ -1269,7 +1269,7 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
   const [quickAdd, setQuickAdd] = useState(null);   // { targetId, relType }
   const [search, setSearch]     = useState("");
   const [isolateId, setIsolateId] = useState(null);
-  const [pan, setPan]           = useState(() => initialLayout?.pan ?? { x: 0, y: 0 });
+  const [pan, setPan]           = useState({ x: 0, y: 0 });
   const [zoom, setZoom]         = useState(() => initialLayout?.zoom ?? 0.85);
   const [dragging, setDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState(null);
@@ -1280,13 +1280,9 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
   const [contextMenu, setContextMenu] = useState(null); // { personId, x, y }
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const canvasRef        = useRef();
-  // Skip auto-centering only if saved layout covers ALL current persons.
-  // If persons were added/removed since last save, always re-center so nothing is off-screen.
-  const savedPosIds = initialLayout?.pos ? Object.keys(initialLayout.pos) : [];
-  const allPersonsCovered = initialPersons?.length > 0 &&
-    initialPersons.every((p) => savedPosIds.includes(p.id));
-  const centered              = useRef(allPersonsCovered && !!initialLayout?.pan);
+  const centered              = useRef(false);
   const personsInitialized    = useRef(false); // skip Firestore save on first mount
+  const zoomRef               = useRef(zoom);  // always-current zoom for wheel handler
   const importFileRef    = useRef();
   const clickTimerRef    = useRef(null);
   const cardDragRef      = useRef(null);  // { id, origX, origY, startMouseX, startMouseY, dragged }
@@ -1305,6 +1301,9 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
       return merged;
     });
   }, [persons]);
+
+  // Keep zoomRef in sync so the wheel handler never has a stale closure
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
   // Auto-center once on first load
   useEffect(() => {
@@ -1432,7 +1431,20 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
     if (!el) return;
     const onWheel = (e) => {
       e.preventDefault();
-      setZoom((z) => Math.min(2.5, Math.max(0.2, z * (e.deltaY < 0 ? 1.1 : 0.91))));
+      const factor = e.deltaY < 0 ? 1.1 : 0.91;
+      const currentZoom = zoomRef.current;
+      const newZ = Math.min(2.5, Math.max(0.2, currentZoom * factor));
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const W = rect.width;
+      const H = rect.height;
+      // Zoom toward cursor: keep SVG point under cursor fixed
+      setZoom(newZ);
+      setPan((p) => ({
+        x: mouseX - W / 2 - ((mouseX - W / 2 - p.x) / currentZoom) * newZ,
+        y: mouseY - H / 2 - ((mouseY - H / 2 - p.y) / currentZoom) * newZ,
+      }));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -2054,8 +2066,15 @@ export default function FamilyTreeApp({ username, onLogout, treeId, treeName, in
               </button>
             )}
             <div style={{ width: 1, height: 20, background: T.panelBorder }} />
-            {[['−', 0.87], ['+', 1.15]].map(([l, f]) => (
-              <button key={l} onClick={() => setZoom((z) => Math.min(2.5, Math.max(0.2, z * f)))}
+            {[['−', 0.87, 'zoom-out'], ['+', 1.15, 'zoom-in']].map(([l, f, tid]) => (
+              <button key={l} data-testid={tid}
+                onClick={() => {
+                  // Read zoom directly from closure (current render value) — do NOT nest
+                  // setPan inside setZoom updater; StrictMode calls updaters twice
+                  const newZ = Math.min(2.5, Math.max(0.2, zoom * f));
+                  setZoom(newZ);
+                  setPan((p) => ({ x: p.x * newZ / zoom, y: p.y * newZ / zoom }));
+                }}
                 style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 7, width: 28, height: 28, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
                 {l}
               </button>
