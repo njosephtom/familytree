@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import FamilyTreeApp from '../components/FamilyTreeApp';
+const FamilyTreeApp = lazy(() => import('../components/FamilyTreeApp'));
 import ErrorBoundary from '../components/ErrorBoundary';
 import {
   getUserFamilyTrees,
@@ -349,18 +349,20 @@ export default function Dashboard() {
             </div>
           ) : activeTree && activeLayout !== undefined ? (
             <ErrorBoundary key={activeTree.id}>
-              <FamilyTreeApp
-                key={activeTree.id}
-                treeId={activeTree.id}
-                treeName={activeTree.name}
-                initialPersons={activeTree.persons || []}
-                initialLayout={activeLayout}
-                uid={user?.uid}
-                username={user?.displayName || user?.email}
-                toolbarPortal={treeToolbarEl}
-                onInvite={() => openInviteDialog(activeTree.id)}
-                onDeleteTree={handleDeleteTree}
-              />
+              <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><div style={{ color: T.textMuted, fontSize: 13 }}>Loading…</div></div>}>
+                <FamilyTreeApp
+                  key={activeTree.id}
+                  treeId={activeTree.id}
+                  treeName={activeTree.name}
+                  initialPersons={activeTree.persons || []}
+                  initialLayout={activeLayout}
+                  uid={user?.uid}
+                  username={user?.displayName || user?.email}
+                  toolbarPortal={treeToolbarEl}
+                  onInvite={() => openInviteDialog(activeTree.id)}
+                  onDeleteTree={handleDeleteTree}
+                />
+              </Suspense>
             </ErrorBoundary>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
