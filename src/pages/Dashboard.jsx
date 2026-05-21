@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import FamilyTreeApp from '../components/FamilyTreeApp';
+import ErrorBoundary from '../components/ErrorBoundary';
 import {
   getUserFamilyTrees,
   createFamilyTree,
@@ -347,18 +348,20 @@ export default function Dashboard() {
               <button style={BTN('primary')} onClick={() => setShowNewTree(true)}>Create Your First Family Tree</button>
             </div>
           ) : activeTree && activeLayout !== undefined ? (
-            <FamilyTreeApp
-              key={activeTree.id}
-              treeId={activeTree.id}
-              treeName={activeTree.name}
-              initialPersons={activeTree.persons || []}
-              initialLayout={activeLayout}
-              uid={user?.uid}
-              username={user?.displayName || user?.email}
-              toolbarPortal={treeToolbarEl}
-              onInvite={() => openInviteDialog(activeTree.id)}
-              onDeleteTree={handleDeleteTree}
-            />
+            <ErrorBoundary key={activeTree.id}>
+              <FamilyTreeApp
+                key={activeTree.id}
+                treeId={activeTree.id}
+                treeName={activeTree.name}
+                initialPersons={activeTree.persons || []}
+                initialLayout={activeLayout}
+                uid={user?.uid}
+                username={user?.displayName || user?.email}
+                toolbarPortal={treeToolbarEl}
+                onInvite={() => openInviteDialog(activeTree.id)}
+                onDeleteTree={handleDeleteTree}
+              />
+            </ErrorBoundary>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <div style={{ color: T.textMuted, fontSize: 13 }}>Loading…</div>
