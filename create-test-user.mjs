@@ -1,5 +1,4 @@
 // Script to create a Firebase test user via REST API
-const API_KEY = 'AIzaSyAL9VnbMHttdC6lA-X3hWOQIp5KzTmc_Rw';
 const email = 'playwright.test@familytree.dev';
 const password = 'PlaywrightTest123!';
 
