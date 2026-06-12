@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getAllFamilyTrees, getAllUsers } from '../utils/firestoreService';
+import { getAllFamilyTrees, getAllUsers, removeMemberFromTree } from '../utils/firestoreService';
 
 const ADMIN_EMAIL = 'admin@familytree.com';
 
@@ -14,6 +14,7 @@ const T = {
   accent: '#3a78c9',
   accentHover: '#2a60aa',
   red: '#d94f4f',
+  redLight: '#fee2e2',
   panelBorder: '#dde6f0',
   toolbar: '#ffffff',
   toolbarBorder: '#d8e4ef',
@@ -40,6 +41,121 @@ function exportTreeXml(tree) {
   URL.revokeObjectURL(a.href);
 }
 
+function MembersModal({ tree, userMap, onClose, onRemoved }) {
+  const [removing, setRemoving] = useState('');
+  const [confirmUid, setConfirmUid] = useState('');
+
+  const members = Object.entries(tree.members || {}).map(([uid, info]) => ({
+    uid,
+    role: info.role || 'member',
+    joinedAt: info.joinedAt,
+    ...userMap[uid],
+  }));
+
+  async function handleRemove(uid) {
+    setRemoving(uid);
+    try {
+      await removeMemberFromTree(tree.id, uid);
+      onRemoved(tree.id, uid);
+      setConfirmUid('');
+    } finally {
+      setRemoving('');
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,40,70,0.45)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20, fontFamily: SF }}>
+      <div style={{ background: T.white, borderRadius: 16, width: '100%', maxWidth: 560, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', border: `1px solid ${T.panelBorder}`, display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+
+        {/* Header */}
+        <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${T.panelBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: `linear-gradient(135deg,${T.bg} 0%,${T.white} 60%)`, flexShrink: 0 }}>
+          <div>
+            <h3 style={{ margin: 0, color: T.text, fontSize: 16, fontWeight: 800 }}>👥 Members of "{tree.name}"</h3>
+            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 3 }}>{members.length} account{members.length !== 1 ? 's' : ''} with access</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: 24, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+
+        {/* List */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '14px 22px' }}>
+          {members.length === 0 ? (
+            <div style={{ color: T.textMuted, fontSize: 13, textAlign: 'center', padding: '24px 0' }}>No members found.</div>
+          ) : members.map((m) => {
+            const joined = m.joinedAt?.toDate?.()
+              ? m.joinedAt.toDate().toLocaleDateString()
+              : '—';
+            const isOwner = m.role === 'owner';
+            const isConfirming = confirmUid === m.uid;
+
+            return (
+              <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: `1px solid ${T.panelBorder}` }}>
+                {/* Avatar */}
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: T.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 800, color: '#fff' }}>
+                  {(m.displayName || m.email || '?')[0].toUpperCase()}
+                </div>
+
+                {/* Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: T.text, fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.displayName || m.email || m.uid}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.email && m.displayName ? m.email : ''}{m.email && m.displayName ? ' · ' : ''}{joined !== '—' ? `Joined ${joined}` : ''}
+                  </div>
+                </div>
+
+                {/* Role badge */}
+                <span style={{
+                  fontSize: 10, fontWeight: 700, borderRadius: 5, padding: '2px 8px', flexShrink: 0,
+                  background: isOwner ? '#dbeafe' : T.bg,
+                  color: isOwner ? '#1d4ed8' : T.textSub,
+                }}>
+                  {isOwner ? '★ Owner' : 'Member'}
+                </span>
+
+                {/* Remove / Confirm */}
+                {!isOwner && (
+                  isConfirming ? (
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button
+                        onClick={() => handleRemove(m.uid)}
+                        disabled={removing === m.uid}
+                        style={{ background: T.red, border: 'none', color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {removing === m.uid ? 'Removing…' : 'Confirm'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmUid('')}
+                        style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmUid(m.uid)}
+                      style={{ background: T.redLight, border: 'none', color: T.red, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                    >
+                      Remove
+                    </button>
+                  )
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 22px', borderTop: `1px solid ${T.panelBorder}`, display: 'flex', justifyContent: 'flex-end', background: `${T.bg}88`, flexShrink: 0 }}>
+          <button onClick={onClose} style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 8, padding: '7px 18px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: SF }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { user, logOut } = useAuth();
   const navigate = useNavigate();
@@ -49,8 +165,8 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [search, setSearch]   = useState('');
+  const [membersTree, setMembersTree] = useState(null); // tree whose members modal is open
 
-  // Guard: only admin@familytree.com
   useEffect(() => {
     if (!user) { navigate('/login'); return; }
     if (user.email !== ADMIN_EMAIL) { navigate('/dashboard'); return; }
@@ -73,6 +189,20 @@ export default function Admin() {
     navigate('/login');
   }
 
+  function handleMemberRemoved(treeId, uid) {
+    setTrees((prev) => prev.map((t) => {
+      if (t.id !== treeId) return t;
+      const { [uid]: _removed, ...rest } = t.members || {};
+      return { ...t, members: rest };
+    }));
+    // Keep modal open with updated data
+    setMembersTree((prev) => {
+      if (!prev || prev.id !== treeId) return prev;
+      const { [uid]: _removed, ...rest } = prev.members || {};
+      return { ...prev, members: rest };
+    });
+  }
+
   const userMap = Object.fromEntries(users.map((u) => [u.uid || u.id, u]));
 
   const filtered = trees.filter((t) => {
@@ -85,6 +215,8 @@ export default function Admin() {
     );
   });
 
+  const totalJoinedUsers = trees.reduce((s, t) => s + Object.keys(t.members || {}).length, 0);
+
   if (!user || user.email !== ADMIN_EMAIL) return null;
 
   return (
@@ -96,7 +228,7 @@ export default function Admin() {
         <span style={{ fontSize: 20 }}>🌳</span>
         <span style={{ color: T.text, fontSize: 13, fontWeight: 800 }}>Family Tree</span>
         <span style={{ color: T.panelBorder }}>|</span>
-        <span style={{ color: T.accent, fontSize: 13, fontWeight: 800 }}>🛡 Admin Panel</span>
+        <span style={{ color: T.accent, fontSize: 13, fontWeight: 800 }}>🛡 Account Settings</span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ color: T.textMuted, fontSize: 12 }}>{user.email}</span>
           <button
@@ -121,8 +253,8 @@ export default function Admin() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
           {[
             { label: 'Total Trees', value: trees.length, icon: '🌳' },
-            { label: 'Total Users', value: users.length, icon: '👥' },
-            { label: 'Total Members', value: trees.reduce((s, t) => s + (t.persons?.length || 0), 0), icon: '👤' },
+            { label: 'Registered Users', value: users.length, icon: '👤' },
+            { label: 'Total Joined Members', value: totalJoinedUsers, icon: '👥' },
           ].map(({ label, value, icon }) => (
             <div key={label} style={{ background: T.white, borderRadius: 14, padding: '18px 22px', border: `1px solid ${T.panelBorder}`, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div style={{ fontSize: 26, marginBottom: 6 }}>{icon}</div>
@@ -157,8 +289,8 @@ export default function Admin() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: T.bg }}>
-                  {['Tree Name', 'Owner', 'Members', 'Created', 'Export XML'].map((h) => (
-                    <th key={h} style={{ padding: '10px 18px', color: T.textMuted, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: h === 'Members' || h === 'Export XML' ? 'center' : 'left', borderBottom: `1px solid ${T.panelBorder}` }}>{h}</th>
+                  {['Tree Name', 'Owner', 'Joined Members', 'Family Persons', 'Created', 'Actions'].map((h) => (
+                    <th key={h} style={{ padding: '10px 18px', color: T.textMuted, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: ['Joined Members', 'Family Persons', 'Actions'].includes(h) ? 'center' : 'left', borderBottom: `1px solid ${T.panelBorder}` }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -168,6 +300,8 @@ export default function Admin() {
                   const created = tree.createdAt?.toDate?.()
                     ? tree.createdAt.toDate().toLocaleDateString()
                     : '—';
+                  const joinedCount = Object.keys(tree.members || {}).length;
+
                   return (
                     <tr
                       key={tree.id}
@@ -184,21 +318,37 @@ export default function Admin() {
                         {owner?.displayName && <div style={{ color: T.textMuted, fontSize: 11 }}>{owner.displayName}</div>}
                       </td>
                       <td style={{ padding: '12px 18px', textAlign: 'center' }}>
-                        <span style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.accent, borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 700 }}>
+                        <button
+                          onClick={() => setMembersTree(tree)}
+                          title="View and manage members"
+                          style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.accent, borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: SF }}
+                        >
+                          👥 {joinedCount}
+                        </button>
+                      </td>
+                      <td style={{ padding: '12px 18px', textAlign: 'center' }}>
+                        <span style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 700 }}>
                           {tree.persons?.length ?? 0}
                         </span>
                       </td>
                       <td style={{ padding: '12px 18px', color: T.textMuted, fontSize: 12 }}>{created}</td>
                       <td style={{ padding: '12px 18px', textAlign: 'center' }}>
-                        <button
-                          onClick={() => exportTreeXml(tree)}
-                          title={`Export "${tree.name}" as XML`}
-                          style={{ background: T.accent, border: 'none', color: '#fff', borderRadius: 7, padding: '6px 14px', fontSize: 11, cursor: 'pointer', fontWeight: 800, whiteSpace: 'nowrap' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = T.accentHover; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = T.accent; }}
-                        >
-                          ⬆ XML
-                        </button>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                          <button
+                            onClick={() => setMembersTree(tree)}
+                            style={{ background: T.accent, border: 'none', color: '#fff', borderRadius: 7, padding: '6px 12px', fontSize: 11, cursor: 'pointer', fontWeight: 800, whiteSpace: 'nowrap' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = T.accentHover; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = T.accent; }}
+                          >
+                            Manage Members
+                          </button>
+                          <button
+                            onClick={() => exportTreeXml(tree)}
+                            style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 7, padding: '6px 12px', fontSize: 11, cursor: 'pointer', fontWeight: 800, whiteSpace: 'nowrap' }}
+                          >
+                            ⬆ XML
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -208,6 +358,16 @@ export default function Admin() {
           )}
         </div>
       </div>
+
+      {/* ── Members modal ── */}
+      {membersTree && (
+        <MembersModal
+          tree={membersTree}
+          userMap={userMap}
+          onClose={() => setMembersTree(null)}
+          onRemoved={handleMemberRemoved}
+        />
+      )}
     </div>
   );
 }

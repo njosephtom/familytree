@@ -71,7 +71,8 @@ export async function getFamilyTree(treeId) {
 }
 
 export async function getUserFamilyTrees(uid) {
-  const userSnap = await getDoc(doc(db, 'users', uid));
+  // getDocFromServer bypasses local cache — critical after acceptInvite writes familyTreeIds
+  const userSnap = await getDocFromServer(doc(db, 'users', uid));
   if (!userSnap.exists()) return [];
   const ids = userSnap.data().familyTreeIds || [];
   const trees = await Promise.all(ids.map((id) => getFamilyTree(id)));
@@ -105,15 +106,32 @@ export async function deleteFamilyTree(treeId, ownerUid) {
   await deleteDoc(doc(db, 'familyTrees', treeId));
 }
 
+export async function removeMemberFromTree(treeId, uid) {
+  await updateDoc(doc(db, 'familyTrees', treeId), {
+    [`members.${uid}`]: deleteField(),
+  });
+  await updateDoc(doc(db, 'users', uid), {
+    familyTreeIds: arrayRemove(treeId),
+    [`treeLayouts.${treeId}`]: deleteField(),
+  });
+}
+
+export async function updateMemberRole(treeId, uid, role) {
+  await updateDoc(doc(db, 'familyTrees', treeId), {
+    [`members.${uid}.role`]: role,
+  });
+}
+
 // ── Invites ───────────────────────────────────────────────────────────────────
 
-export async function createInvite(treeId, treeName, invitedByUid, invitedByName, invitedEmail) {
+export async function createInvite(treeId, treeName, invitedByUid, invitedByName, invitedEmail, role = 'viewer') {
   const ref = await addDoc(collection(db, 'invites'), {
     treeId,
     treeName,
     invitedBy:     invitedByUid,
     invitedByName,
     invitedEmail:  invitedEmail.toLowerCase(),
+    role,
     status:        'pending',
     createdAt:     serverTimestamp(),
   });
@@ -139,9 +157,9 @@ export async function acceptInvite(inviteId, uid) {
   const invite = await getInvite(inviteId);
   if (!invite || invite.status !== 'pending') return;
 
-  // Add user to family tree members
+  // Add user to family tree members with the role set at invite time
   await updateDoc(doc(db, 'familyTrees', invite.treeId), {
-    [`members.${uid}`]: { role: 'member', joinedAt: serverTimestamp() },
+    [`members.${uid}`]: { role: invite.role || 'viewer', joinedAt: serverTimestamp() },
   });
 
   // Add tree to user's list

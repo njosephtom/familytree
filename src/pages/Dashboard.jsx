@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 const FamilyTreeApp = lazy(() => import('../components/FamilyTreeApp'));
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -13,6 +13,11 @@ import {
   setUserPresence,
   clearUserPresence,
   getUserTreeLayout,
+  getAllFamilyTrees,
+  getAllUsers,
+  removeMemberFromTree,
+  updateMemberRole,
+  getUser,
 } from '../utils/firestoreService';
 
 /* ── Design tokens (mirrors FamilyTreeApp) ── */
@@ -102,10 +107,22 @@ export default function Dashboard() {
   /* Invite dialog */
   const [inviteTree, setInviteTree]   = useState(null);
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole]   = useState('viewer');
   const [inviteList, setInviteList]   = useState([]);
   const [inviting, setInviting]       = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteCopied, setInviteCopied] = useState('');
+  const [inviteMailto, setInviteMailto] = useState('');
+  const [resendCopied, setResendCopied] = useState(''); // inviteId that was just re-copied
+
+  /* Settings modal */
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTrees, setSettingsTrees] = useState([]);
+  const [settingsUsers, setSettingsUsers] = useState([]);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsConfirmUid, setSettingsConfirmUid] = useState('');
+  const [settingsRemoving, setSettingsRemoving] = useState('');
+  const [settingsExpandedTree, setSettingsExpandedTree] = useState(null);
 
   /* User menu */
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -193,8 +210,11 @@ export default function Dashboard() {
   async function openInviteDialog(treeId) {
     setInviteTree(treeId);
     setInviteEmail('');
+    setInviteRole('viewer');
     setInviteError('');
     setInviteCopied('');
+    setInviteMailto('');
+    setResendCopied('');
     const list = await getTreeInvites(treeId);
     setInviteList(list);
   }
@@ -206,10 +226,19 @@ export default function Dashboard() {
     setInviteError('');
     try {
       const tree = trees.find((t) => t.id === inviteTree);
-      const inviteId = await createInvite(inviteTree, tree.name, user.uid, user.displayName || user.email, inviteEmail.trim());
+      const emailTo = inviteEmail.trim();
+      const inviteId = await createInvite(inviteTree, tree.name, user.uid, user.displayName || user.email, emailTo, inviteRole);
       const link = `${window.location.origin}/invite/${inviteId}`;
       await navigator.clipboard.writeText(link);
       setInviteCopied(link);
+
+      // Build mailto so user can send it from their email client
+      const subject = encodeURIComponent(`You've been invited to join the "${tree.name}" family tree`);
+      const body = encodeURIComponent(
+        `Hi,\n\n${user.displayName || user.email} has invited you to join the "${tree.name}" family tree.\n\nClick the link below to accept your invitation:\n${link}\n\nBest regards`
+      );
+      setInviteMailto(`mailto:${emailTo}?subject=${subject}&body=${body}`);
+
       setInviteEmail('');
       setInviteList(await getTreeInvites(inviteTree));
     } catch {
@@ -217,6 +246,58 @@ export default function Dashboard() {
     } finally {
       setInviting(false);
     }
+  }
+
+  async function handleResendInvite(inv) {
+    const link = `${window.location.origin}/invite/${inv.id}`;
+    await navigator.clipboard.writeText(link);
+    setResendCopied(inv.id);
+    setTimeout(() => setResendCopied(''), 2500);
+  }
+
+  async function openSettings() {
+    setShowSettings(true);
+    setSettingsLoading(true);
+    setSettingsExpandedTree(null);
+    setSettingsConfirmUid('');
+    try {
+      const isAdmin = user?.email === 'admin@familytree.com';
+      const treesToShow = isAdmin ? await getAllFamilyTrees() : trees;
+      setSettingsTrees(treesToShow);
+
+      // Fetch profiles for all unique member UIDs
+      const allUids = new Set();
+      treesToShow.forEach((t) => Object.keys(t.members || {}).forEach((uid) => allUids.add(uid)));
+      const profiles = await Promise.all([...allUids].map((uid) => getUser(uid)));
+      const userMap = {};
+      [...allUids].forEach((uid, i) => { if (profiles[i]) userMap[uid] = profiles[i]; });
+      setSettingsUsers(userMap);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  async function handleSettingsRemoveMember(treeId, uid) {
+    setSettingsRemoving(uid);
+    try {
+      await removeMemberFromTree(treeId, uid);
+      setSettingsTrees((prev) => prev.map((t) => {
+        if (t.id !== treeId) return t;
+        const { [uid]: _, ...rest } = t.members || {};
+        return { ...t, members: rest };
+      }));
+      setSettingsConfirmUid('');
+    } finally {
+      setSettingsRemoving('');
+    }
+  }
+
+  async function handleSettingsRoleChange(treeId, uid, newRole) {
+    await updateMemberRole(treeId, uid, newRole);
+    setSettingsTrees((prev) => prev.map((t) => {
+      if (t.id !== treeId) return t;
+      return { ...t, members: { ...t.members, [uid]: { ...t.members[uid], role: newRole } } };
+    }));
   }
 
   const activeTree = trees.find((t) => t.id === activeTreeId);
@@ -324,16 +405,14 @@ export default function Dashboard() {
                   <div style={{ color: T.text, fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.displayName || 'User'}</div>
                   <div style={{ color: T.textMuted, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>
                 </div>
-                {user?.email === 'admin@familytree.com' && (
-                  <Link
-                    to="/admin"
-                    style={{ display: 'block', width: '100%', padding: '10px 14px', background: 'none', color: T.accent, fontSize: 13, fontWeight: 700, textDecoration: 'none', fontFamily: SF }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                  >
-                    🛡 Admin Panel
-                  </Link>
-                )}
+                <button
+                  onClick={() => { setShowUserMenu(false); openSettings(); }}
+                  style={{ width: '100%', padding: '10px 14px', background: 'none', border: 'none', color: T.text, cursor: 'pointer', fontSize: 13, fontWeight: 700, textAlign: 'left', fontFamily: SF }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = T.bg; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                >
+                  ⚙ Settings
+                </button>
                 <button
                   onClick={handleLogout}
                   style={{ width: '100%', padding: '10px 14px', background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 13, fontWeight: 700, textAlign: 'left', fontFamily: SF }}
@@ -417,54 +496,243 @@ export default function Dashboard() {
       )}
 
       {/* ── Invite dialog ── */}
-      {inviteTree && (
-        <Modal
-          title={`👥 Invite to "${trees.find((t) => t.id === inviteTree)?.name}"`}
-          onClose={() => setInviteTree(null)}
-          footer={<button style={BTN('secondary')} onClick={() => setInviteTree(null)}>Close</button>}
-        >
-          <form onSubmit={handleSendInvite} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5, fontFamily: SF }}>Email Address</label>
-              <input
-                type="email"
-                style={{ width: '100%', background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 8, padding: '9px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: SF }}
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="family.member@example.com"
-                required
-              />
-            </div>
-            {inviteError && <div style={{ color: T.red, fontSize: 12 }}>{inviteError}</div>}
-            {inviteCopied && (
-              <div style={{ background: '#d1fae5', border: '1px solid #6ee7b7', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065f46' }}>
-                ✓ Invite link copied!<br />
-                <code style={{ fontSize: 10, wordBreak: 'break-all' }}>{inviteCopied}</code>
+      {inviteTree && (() => {
+        const ROLE_OPTIONS = [
+          { value: 'admin',  label: '🛡 Admin',  desc: 'Can invite & manage members' },
+          { value: 'editor', label: '✏ Editor', desc: 'Can edit tree data' },
+          { value: 'viewer', label: '👁 Viewer', desc: 'Read-only access' },
+        ];
+        return (
+          <Modal
+            title={`👥 Invite to "${trees.find((t) => t.id === inviteTree)?.name}"`}
+            onClose={() => setInviteTree(null)}
+            footer={<button style={BTN('secondary')} onClick={() => setInviteTree(null)}>Close</button>}
+          >
+            <form onSubmit={handleSendInvite} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ display: 'block', color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5, fontFamily: SF }}>Email Address</label>
+                <input
+                  type="email"
+                  style={{ width: '100%', background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.text, borderRadius: 8, padding: '9px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: SF }}
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="family.member@example.com"
+                  required
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, fontFamily: SF }}>Role</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {ROLE_OPTIONS.map((r) => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => setInviteRole(r.value)}
+                      title={r.desc}
+                      style={{
+                        flex: 1, padding: '8px 6px', borderRadius: 8, cursor: 'pointer', fontFamily: SF,
+                        fontSize: 11, fontWeight: 700, transition: 'all 0.15s',
+                        border: inviteRole === r.value ? `2px solid ${T.accent}` : `2px solid ${T.panelBorder}`,
+                        background: inviteRole === r.value ? '#eff6ff' : T.bg,
+                        color: inviteRole === r.value ? T.accent : T.textSub,
+                      }}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10, marginTop: 4 }}>
+                  {ROLE_OPTIONS.find((r) => r.value === inviteRole)?.desc}
+                </div>
+              </div>
+              {inviteError && <div style={{ color: T.red, fontSize: 12 }}>{inviteError}</div>}
+              {inviteCopied && (
+                <div style={{ background: '#d1fae5', border: '1px solid #6ee7b7', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065f46' }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>✓ Invite link copied to clipboard!</div>
+                  <code style={{ fontSize: 10, wordBreak: 'break-all', display: 'block', marginBottom: 8 }}>{inviteCopied}</code>
+                  <a
+                    href={inviteMailto}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: T.accent, color: '#fff', borderRadius: 6, padding: '5px 12px', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}
+                  >
+                    ✉ Open Email Client to Send
+                  </a>
+                </div>
+              )}
+              <button type="submit" style={{ ...BTN('primary'), opacity: inviting || !inviteEmail.trim() ? 0.5 : 1 }} disabled={inviting || !inviteEmail.trim()}>
+                {inviting ? 'Creating invite…' : '✉ Send Invite'}
+              </button>
+            </form>
+            {inviteList.length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Sent Invites</div>
+                {inviteList.map((inv) => (
+                  <div key={inv.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: T.bg, borderRadius: 8, marginBottom: 6, gap: 8 }}>
+                    <span style={{ color: T.text, fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{inv.invitedEmail}</span>
+                    {inv.role && inv.role !== 'member' && (
+                      <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 5, padding: '2px 7px', flexShrink: 0, background: '#ede9fe', color: '#7c3aed' }}>
+                        {inv.role}
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, borderRadius: 5, padding: '2px 8px', flexShrink: 0,
+                      background: inv.status === 'accepted' ? '#d1fae5' : inv.status === 'declined' ? '#fee2e2' : '#fef3c7',
+                      color: inv.status === 'accepted' ? '#065f46' : inv.status === 'declined' ? '#991b1b' : '#92400e',
+                    }}>
+                      {inv.status === 'accepted' ? '✓ Joined' : inv.status === 'declined' ? '✗ Declined' : 'Pending'}
+                    </span>
+                    {inv.status === 'pending' && (
+                      <button
+                        onClick={() => handleResendInvite(inv)}
+                        title="Copy invite link to resend"
+                        style={{ ...BTN('secondary'), padding: '3px 9px', fontSize: 10, flexShrink: 0, background: resendCopied === inv.id ? '#d1fae5' : undefined, color: resendCopied === inv.id ? '#065f46' : undefined }}
+                      >
+                        {resendCopied === inv.id ? '✓ Copied' : 'Resend Link'}
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
-            <button type="submit" style={{ ...BTN('primary'), opacity: inviting || !inviteEmail.trim() ? 0.5 : 1 }} disabled={inviting || !inviteEmail.trim()}>
-              {inviting ? 'Generating…' : 'Send Invite & Copy Link'}
-            </button>
-          </form>
-          {inviteList.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Sent Invites</div>
-              {inviteList.map((inv) => (
-                <div key={inv.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: T.bg, borderRadius: 8, marginBottom: 6 }}>
-                  <span style={{ color: T.text, fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{inv.invitedEmail}</span>
-                  <span style={{
-                    fontSize: 10, fontWeight: 700, borderRadius: 5, padding: '2px 8px', marginLeft: 8,
-                    background: inv.status === 'accepted' ? '#d1fae5' : inv.status === 'declined' ? '#fee2e2' : '#fef3c7',
-                    color: inv.status === 'accepted' ? '#065f46' : inv.status === 'declined' ? '#991b1b' : '#92400e',
-                  }}>
-                    {inv.status}
-                  </span>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Settings modal ── */}
+      {showSettings && (() => {
+        const ROLE_META = {
+          owner:  { label: '★ Owner',  bg: '#dbeafe', color: '#1d4ed8' },
+          admin:  { label: '🛡 Admin',  bg: '#ede9fe', color: '#7c3aed' },
+          editor: { label: '✏ Editor', bg: '#d1fae5', color: '#065f46' },
+          viewer: { label: '👁 Viewer', bg: T.bg,      color: T.textSub },
+        };
+        return (
+          <Modal
+            title="⚙ Settings"
+            onClose={() => setShowSettings(false)}
+            footer={<button style={BTN('secondary')} onClick={() => setShowSettings(false)}>Close</button>}
+          >
+            {/* Profile */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Profile</div>
+              <div style={{ background: T.bg, borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: '50%', background: T.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
+                  {(user?.displayName || user?.email || '?')[0].toUpperCase()}
                 </div>
-              ))}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: T.text, fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.displayName || 'User'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>
+                </div>
+              </div>
             </div>
-          )}
-        </Modal>
-      )}
+
+            {/* Family Trees & Members — visible to every user */}
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>Family Trees & Members</div>
+              {settingsLoading ? (
+                <div style={{ color: T.textMuted, fontSize: 13, padding: '16px 0' }}>Loading…</div>
+              ) : settingsTrees.length === 0 ? (
+                <div style={{ color: T.textMuted, fontSize: 13, padding: '16px 0' }}>No trees found.</div>
+              ) : settingsTrees.map((tree) => {
+                const memberEntries = Object.entries(tree.members || {});
+                const isExpanded = settingsExpandedTree === tree.id;
+                const isOwner = tree.members?.[user?.uid]?.role === 'owner';
+                return (
+                  <div key={tree.id} style={{ border: `1px solid ${T.panelBorder}`, borderRadius: 10, marginBottom: 8, overflow: 'hidden' }}>
+                    <button
+                      onClick={() => setSettingsExpandedTree(isExpanded ? null : tree.id)}
+                      style={{ width: '100%', background: T.bg, border: 'none', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: SF }}
+                    >
+                      <span style={{ color: T.text, fontSize: 13, fontWeight: 700 }}>🌳 {tree.name || '(unnamed)'}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {isOwner && <span style={{ fontSize: 10, fontWeight: 700, color: '#1d4ed8', background: '#dbeafe', borderRadius: 5, padding: '2px 7px' }}>Owner</span>}
+                        <span style={{ background: T.accent, color: '#fff', borderRadius: 12, padding: '1px 9px', fontSize: 11, fontWeight: 700 }}>
+                          {memberEntries.length} member{memberEntries.length !== 1 ? 's' : ''}
+                        </span>
+                        <span style={{ color: T.textMuted, fontSize: 12 }}>{isExpanded ? '▲' : '▼'}</span>
+                      </span>
+                    </button>
+
+                    {isExpanded && (
+                      <div style={{ padding: '8px 14px 12px' }}>
+                        {memberEntries.length === 0 ? (
+                          <div style={{ color: T.textMuted, fontSize: 12, padding: '8px 0' }}>No members.</div>
+                        ) : memberEntries.map(([uid, info]) => {
+                          const u = settingsUsers[uid] || {};
+                          const memberIsOwner = info.role === 'owner';
+                          const isConfirming = settingsConfirmUid === `${tree.id}:${uid}`;
+                          const joined = info.joinedAt?.toDate?.()
+                            ? info.joinedAt.toDate().toLocaleDateString() : '—';
+                          const roleMeta = ROLE_META[info.role] || ROLE_META.viewer;
+                          return (
+                            <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: `1px solid ${T.panelBorder}` }}>
+                              <div style={{ width: 32, height: 32, borderRadius: '50%', background: T.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
+                                {(u.displayName || u.email || uid)[0].toUpperCase()}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ color: T.text, fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {u.displayName || u.email || uid}
+                                </div>
+                                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                                  {u.email || ''}{u.email && joined !== '—' ? ' · ' : ''}{joined !== '—' ? `Joined ${joined}` : ''}
+                                </div>
+                              </div>
+
+                              {/* Role: dropdown for owner managing others, badge otherwise */}
+                              {isOwner && !memberIsOwner ? (
+                                <select
+                                  value={info.role || 'viewer'}
+                                  onChange={(e) => handleSettingsRoleChange(tree.id, uid, e.target.value)}
+                                  style={{ background: roleMeta.bg, color: roleMeta.color, border: 'none', borderRadius: 6, padding: '3px 6px', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: SF, flexShrink: 0 }}
+                                >
+                                  <option value="admin">🛡 Admin</option>
+                                  <option value="editor">✏ Editor</option>
+                                  <option value="viewer">👁 Viewer</option>
+                                </select>
+                              ) : (
+                                <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 5, padding: '2px 7px', flexShrink: 0, background: roleMeta.bg, color: roleMeta.color }}>
+                                  {roleMeta.label}
+                                </span>
+                              )}
+
+                              {/* Remove (owner can remove non-owners) */}
+                              {isOwner && !memberIsOwner && (
+                                isConfirming ? (
+                                  <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                                    <button
+                                      onClick={() => handleSettingsRemoveMember(tree.id, uid)}
+                                      disabled={settingsRemoving === uid}
+                                      style={{ background: T.red, border: 'none', color: '#fff', borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                                    >
+                                      {settingsRemoving === uid ? '…' : 'Confirm'}
+                                    </button>
+                                    <button
+                                      onClick={() => setSettingsConfirmUid('')}
+                                      style={{ background: T.bg, border: `1px solid ${T.panelBorder}`, color: T.textSub, borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setSettingsConfirmUid(`${tree.id}:${uid}`)}
+                                    style={{ background: '#fee2e2', border: 'none', color: T.red, borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                                  >
+                                    Remove
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
